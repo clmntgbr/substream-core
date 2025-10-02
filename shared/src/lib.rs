@@ -8,7 +8,7 @@ use std::time::Duration;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 use aws_sdk_s3::Client as AwsS3Client;
-use aws_sdk_s3::config::{Credentials, Region};
+use aws_sdk_s3::config::{Credentials, Region, BehaviorVersion};
 use aws_sdk_s3::primitives::ByteStream;
 use std::path::Path;
 
@@ -432,6 +432,7 @@ impl S3Client {
             .endpoint_url(endpoint)
             .region(Region::new(region.to_string()))
             .force_path_style(true) // Required for MinIO and similar S3-compatible services
+            .behavior_version(BehaviorVersion::latest())
             .build();
 
         let client = AwsS3Client::from_conf(config);
