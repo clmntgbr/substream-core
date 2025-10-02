@@ -5,7 +5,7 @@ use shared::{GetVideoPayload, RabbitMQClient, RabbitMQConfig, S3Client, TaskMess
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{error, info};
-use tokio::io::AsyncWriteExt;
+use tokio::process::Command;
 
 const TASK_TYPE: &str = "get_video";
 
@@ -57,9 +57,6 @@ async fn main() -> Result<()> {
             Some(delivery) = consumer.next() => {
                 match delivery {
                     Ok(delivery) => {
-                        let data = String::from_utf8_lossy(&delivery.data);
-                        info!("Received message: {}", data);
-
                         match serde_json::from_slice::<TaskMessage<GetVideoPayload>>(&delivery.data) {
                             Ok(message) => {
                                 let webhook_client = Arc::clone(&webhook_client);
@@ -140,13 +137,84 @@ async fn process_get_video(
 ) -> Result<serde_json::Value> {
     info!("Downloading video from: {}", payload.url);
 
+    let temp_dir = "/tmp/videos";
+    tokio::fs::create_dir_all(temp_dir).await?;
     
+    let output_template = format!("{}/{}.%(ext)s", temp_dir, task_id);
+
+    let metadata_output = Command::new("yt-dlp")
+        .arg("--dump-json")
+        .arg("--no-playlist")
+        .arg(&payload.url)
+        .output()
+        .await
+        .context("Failed to execute yt-dlp for metadata")?;
+
+    if !metadata_output.status.success() {
+        let error = String::from_utf8_lossy(&metadata_output.stderr);
+        return Err(anyhow::anyhow!("Failed to get video metadata: {}", error));
+    }
+
+    let metadata: serde_json::Value = serde_json::from_slice(&metadata_output.stdout)
+        .context("Failed to parse yt-dlp metadata")?;
+
+    info!("Video metadata retrieved: {}", metadata.get("title").and_then(|t| t.as_str()).unwrap_or("Unknown"));
+
+    let download_output = Command::new("yt-dlp")
+        .arg("-f")
+        .arg("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best")
+        .arg("--no-playlist")
+        .arg("--merge-output-format")
+        .arg("mp4")
+        .arg("-o")
+        .arg(&output_template)
+        .arg(&payload.url)
+        .output()
+        .await
+        .context("Failed to execute yt-dlp for download")?;
+
+    if !download_output.status.success() {
+        let error = String::from_utf8_lossy(&download_output.stderr);
+        return Err(anyhow::anyhow!("Failed to download video: {}", error));
+    }
+
+    let file_name = format!("{}.mp4", task_id);
+    let temp_file_path = format!("{}/{}", temp_dir, file_name);
+
+    let file_metadata = tokio::fs::metadata(&temp_file_path)
+        .await
+        .context("Failed to read downloaded file metadata")?;
+    
+    let file_size = file_metadata.len();
+    info!("Video downloaded: {} bytes", file_size);
+
+    let s3_key = format!("{}/{}", payload.stream_id, file_name);
+    info!("Uploading to S3: {}", s3_key);
+    
+    s3_client
+        .upload_file(&temp_file_path, &s3_key)
+        .await
+        .context("Failed to upload video to S3")?;
+
+    if let Err(e) = tokio::fs::remove_file(&temp_file_path).await {
+        error!("Failed to remove temporary file {}: {}", temp_file_path, e);
+    }
+
+    info!("Video processed successfully: {}", file_name);
 
     Ok(serde_json::json!({
         "file_name": file_name,
-        "original_file_name": original_file_name,
-        "mime_type": mime_type,
-        "size": if content_length > 0 { content_length } else { actual_size },
+        "original_file_name": metadata.get("title").and_then(|t| t.as_str()).unwrap_or("video"),
+        "title": metadata.get("title"),
+        "description": metadata.get("description"),
+        "duration": metadata.get("duration"),
+        "uploader": metadata.get("uploader"),
+        "upload_date": metadata.get("upload_date"),
+        "view_count": metadata.get("view_count"),
+        "like_count": metadata.get("like_count"),
+        "thumbnail": metadata.get("thumbnail"),
+        "mime_type": "video/mp4",
+        "size": file_size,
         "stream_id": payload.stream_id,
     }))
 }

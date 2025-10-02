@@ -29,7 +29,13 @@ RUN apt-get update && \
     libssl3 \
     ffmpeg \
     curl \
+    python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install yt-dlp
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && \
