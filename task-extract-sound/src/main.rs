@@ -129,7 +129,6 @@ async fn main() -> Result<()> {
 async fn process_extract_sound(payload: &ExtractSoundPayload, task_id: &uuid::Uuid) -> Result<serde_json::Value> {
     info!("Extracting sound from video: {}", payload.file_name);
 
-    // TODO: Real extraction implementation
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
     let audio_file_name = format!("{}.mp3", task_id);

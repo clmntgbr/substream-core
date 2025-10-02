@@ -140,74 +140,7 @@ async fn process_get_video(
 ) -> Result<serde_json::Value> {
     info!("Downloading video from: {}", payload.url);
 
-    // Extract original filename from URL
-    let original_file_name = payload.url
-        .split('/')
-        .last()
-        .and_then(|s| s.split('?').next()) // Remove query parameters
-        .unwrap_or("video.mp4")
-        .to_string();
     
-    // Generate unique filename
-    let file_extension = original_file_name
-        .split('.')
-        .last()
-        .unwrap_or("mp4");
-    let file_name = format!("{}.{}", task_id, file_extension);
-    
-    // Create temporary directory if it doesn't exist
-    let temp_dir = "/tmp/videos";
-    tokio::fs::create_dir_all(temp_dir).await?;
-    let temp_file_path = format!("{}/{}", temp_dir, file_name);
-
-    // Download video
-    info!("Downloading video to: {}", temp_file_path);
-    let response = reqwest::get(&payload.url)
-        .await
-        .context("Failed to download video")?;
-
-    if !response.status().is_success() {
-        return Err(anyhow::anyhow!(
-            "Failed to download video: HTTP {}",
-            response.status()
-        ));
-    }
-
-    // Get content length and mime type
-    let content_length = response.content_length().unwrap_or(0);
-    let mime_type = response
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("video/mp4")
-        .to_string();
-
-    // Save to temporary file
-    let bytes = response.bytes().await.context("Failed to read video bytes")?;
-    let mut file = tokio::fs::File::create(&temp_file_path)
-        .await
-        .context("Failed to create temporary file")?;
-    file.write_all(&bytes).await.context("Failed to write video file")?;
-    file.flush().await?;
-
-    let actual_size = bytes.len() as u64;
-    info!("Video downloaded: {} bytes", actual_size);
-
-    // Upload to S3: stream_id/file_name
-    let s3_key = format!("{}/{}", payload.stream_id, file_name);
-    info!("Uploading to S3: {}", s3_key);
-    
-    s3_client
-        .upload_file(&temp_file_path, &s3_key)
-        .await
-        .context("Failed to upload video to S3")?;
-
-    // Clean up temporary file
-    if let Err(e) = tokio::fs::remove_file(&temp_file_path).await {
-        error!("Failed to remove temporary file {}: {}", temp_file_path, e);
-    }
-
-    info!("Video processed successfully: {}", file_name);
 
     Ok(serde_json::json!({
         "file_name": file_name,

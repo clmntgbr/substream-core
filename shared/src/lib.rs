@@ -172,7 +172,6 @@ impl RabbitMQClient {
 
     /// Declare a queue and start consuming messages
     pub async fn consume(&self, queue_name: &str) -> Result<Consumer> {
-        // Declare the queue (create if doesn't exist)
         self.channel
             .queue_declare(
                 queue_name,
@@ -187,7 +186,6 @@ impl RabbitMQClient {
 
         info!("Queue '{}' declared successfully", queue_name);
 
-        // Start consuming
         let consumer = self
             .channel
             .basic_consume(
