@@ -5,11 +5,7 @@ Rust task processing system with RabbitMQ.
 ## Quick Start
 
 ```bash
-# 1. Configure network connection to your PHP project's RabbitMQ
-./setup-network.sh
-
-# 2. Start services
-cp .env.example .env
+cp .env.dist .env
 docker-compose up --build
 ```
 
@@ -24,9 +20,10 @@ docker-compose up --build
 {
   "task_id": "uuid",
   "payload": {
-    "url": "https://example.com/video.mp4"  // or "video_path" for extract_sound
+    "url": "https://example.com/video.mp4"
   },
-  "webhook_url": "https://your-callback-url"
+  "webhook_url_success": "https://your-callback-url",
+  "webhook_url_failure": "https://your-callback-url",
 }
 ```
 

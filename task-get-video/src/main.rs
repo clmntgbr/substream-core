@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use lapin::options::BasicAckOptions;
-use shared::{RabbitMQClient, RabbitMQConfig, TaskMessage, WebhookClient};
+use shared::{GetVideoPayload, RabbitMQClient, RabbitMQConfig, TaskMessage, WebhookClient};
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 use tracing::{error, info};
 
 const TASK_TYPE: &str = "get_video";
@@ -23,11 +25,16 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to create RabbitMQ client")?;
 
-    let webhook_client = WebhookClient::new();
+    let webhook_client = Arc::new(WebhookClient::new());
 
     let queue_name = std::env::var("QUEUE_GET_VIDEO").unwrap_or("core.get_video".to_string());
+    
+    let max_concurrent = std::env::var("MAX_CONCURRENT_TASKS")
+        .unwrap_or("10".to_string())
+        .parse()
+        .unwrap_or(10);
 
-    info!("Listening on queue: {}", queue_name);
+    info!("Listening on queue: {} (max concurrent: {})", queue_name, max_concurrent);
 
     let mut consumer = rabbitmq_client
         .consume(&queue_name)
@@ -35,6 +42,7 @@ async fn main() -> Result<()> {
         .context("Failed to start consuming messages")?;
 
     let mut shutdown = Box::pin(setup_shutdown_handler());
+    let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
     info!("Service ready, waiting for messages...");
 
@@ -46,10 +54,53 @@ async fn main() -> Result<()> {
                         let data = String::from_utf8_lossy(&delivery.data);
                         info!("Received message: {}", data);
 
-                        match serde_json::from_slice::<TaskMessage>(&delivery.data) {
+                        match serde_json::from_slice::<TaskMessage<GetVideoPayload>>(&delivery.data) {
                             Ok(message) => {
-                                info!("Processing task: {}", message.task_id);
-                                info!("{:?}", message);
+                                let webhook_client = Arc::clone(&webhook_client);
+                                let semaphore = Arc::clone(&semaphore);
+                                
+                                tokio::spawn(async move {
+                                    let _permit = semaphore.acquire().await.unwrap();
+                                    
+                                    info!("Processing task: {}", message.task_id);
+
+                                    match process_get_video(&message.payload, &message.task_id).await {
+                                        Ok(result) => {
+                                            info!("Task {} completed successfully", message.task_id);
+
+                                            if let Err(e) = webhook_client
+                                                .send_success(
+                                                    &message.webhook_url_success,
+                                                    message.task_id,
+                                                    TASK_TYPE,
+                                                    result,
+                                                )
+                                                .await
+                                            {
+                                                error!("Failed to send success webhook: {}", e);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Task {} failed: {}", message.task_id, e);
+
+                                            if let Err(webhook_err) = webhook_client
+                                                .send_error_with_stream(
+                                                    &message.webhook_url_failure,
+                                                    message.task_id,
+                                                    TASK_TYPE,
+                                                    &message.payload.stream_id,
+                                                )
+                                                .await
+                                            {
+                                                error!("Failed to send error webhook: {}", webhook_err);
+                                            }
+                                        }
+                                    }
+
+                                    if let Err(e) = delivery.ack(BasicAckOptions::default()).await {
+                                        error!("Failed to acknowledge message: {}", e);
+                                    }
+                                });
                             }
                             Err(e) => {
                                 error!("Failed to parse message: {}", e);
@@ -73,4 +124,58 @@ async fn main() -> Result<()> {
 
     info!("Service stopped gracefully");
     Ok(())
+}
+
+async fn process_get_video(payload: &GetVideoPayload, task_id: &uuid::Uuid) -> Result<serde_json::Value> {
+    info!("Downloading video from: {}", payload.url);
+
+    // TODO: Real download implementation
+    tokio::time::sleep(tokio::time::Duration::from_secs(20)).await;
+
+    // Extract filename from URL or generate one
+    let original_file_name = payload.url
+        .split('/')
+        .last()
+        .unwrap_or("video.mp4")
+        .to_string();
+    
+    let file_name = format!("{}.mp4", task_id);
+
+    info!("Video downloaded successfully: {}", file_name);
+
+    Ok(serde_json::json!({
+        "file_name": file_name,
+        "original_file_name": original_file_name,
+        "mime_type": "video/mp4",
+        "size": 12345678,
+        "stream_id": payload.stream_id,
+    }))
+}
+
+async fn setup_shutdown_handler() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            info!("Received Ctrl+C signal");
+        },
+        _ = terminate => {
+            info!("Received SIGTERM signal");
+        },
+    }
 }

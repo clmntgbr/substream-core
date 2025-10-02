@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use lapin::options::BasicAckOptions;
-use shared::{RabbitMQClient, RabbitMQConfig, TaskMessage, WebhookClient};
+use shared::{ExtractSoundPayload, RabbitMQClient, RabbitMQConfig, TaskMessage, WebhookClient};
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 use tracing::{error, info};
 
 const TASK_TYPE: &str = "extract_sound";
@@ -23,11 +25,16 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to create RabbitMQ client")?;
 
-    let webhook_client = WebhookClient::new();
+    let webhook_client = Arc::new(WebhookClient::new());
 
     let queue_name = std::env::var("QUEUE_EXTRACT_SOUND").unwrap_or("core.extract_sound".to_string());
+    
+    let max_concurrent = std::env::var("MAX_CONCURRENT_TASKS")
+        .unwrap_or("10".to_string())
+        .parse()
+        .unwrap_or(10);
 
-    info!("Listening on queue: {}", queue_name);
+    info!("Listening on queue: {} (max concurrent: {})", queue_name, max_concurrent);
 
     let mut consumer = rabbitmq_client
         .consume(&queue_name)
@@ -35,6 +42,7 @@ async fn main() -> Result<()> {
         .context("Failed to start consuming messages")?;
 
     let mut shutdown = Box::pin(setup_shutdown_handler());
+    let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
     info!("Service ready, waiting for messages...");
 
@@ -46,46 +54,53 @@ async fn main() -> Result<()> {
                         let data = String::from_utf8_lossy(&delivery.data);
                         info!("Received message: {}", data);
 
-                        match serde_json::from_slice::<TaskMessage>(&delivery.data) {
+                        match serde_json::from_slice::<TaskMessage<ExtractSoundPayload>>(&delivery.data) {
                             Ok(message) => {
-                                info!("Processing task: {}", message.task_id);
+                                let webhook_client = Arc::clone(&webhook_client);
+                                let semaphore = Arc::clone(&semaphore);
+                                
+                                tokio::spawn(async move {
+                                    let _permit = semaphore.acquire().await.unwrap();
+                                    
+                                    info!("Processing task: {}", message.task_id);
 
-                                match process_extract_sound(&message).await {
-                                    Ok(result) => {
-                                        info!("Task {} completed successfully", message.task_id);
+                                    match process_extract_sound(&message.payload, &message.task_id).await {
+                                        Ok(result) => {
+                                            info!("Task {} completed successfully", message.task_id);
 
-                                        if let Err(e) = webhook_client
-                                            .send_success(
-                                                &message.webhook_url,
-                                                message.task_id,
-                                                TASK_TYPE,
-                                                result,
-                                            )
-                                            .await
-                                        {
-                                            error!("Failed to send success webhook: {}", e);
+                                            if let Err(e) = webhook_client
+                                                .send_success(
+                                                    &message.webhook_url_success,
+                                                    message.task_id,
+                                                    TASK_TYPE,
+                                                    result,
+                                                )
+                                                .await
+                                            {
+                                                error!("Failed to send success webhook: {}", e);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Task {} failed: {}", message.task_id, e);
+
+                                            if let Err(webhook_err) = webhook_client
+                                                .send_error_with_stream(
+                                                    &message.webhook_url_failure,
+                                                    message.task_id,
+                                                    TASK_TYPE,
+                                                    &message.payload.stream_id,
+                                                )
+                                                .await
+                                            {
+                                                error!("Failed to send error webhook: {}", webhook_err);
+                                            }
                                         }
                                     }
-                                    Err(e) => {
-                                        error!("Task {} failed: {}", message.task_id, e);
 
-                                        if let Err(webhook_err) = webhook_client
-                                            .send_error(
-                                                &message.webhook_url,
-                                                message.task_id,
-                                                TASK_TYPE,
-                                                &e.to_string(),
-                                            )
-                                            .await
-                                        {
-                                            error!("Failed to send error webhook: {}", webhook_err);
-                                        }
+                                    if let Err(e) = delivery.ack(BasicAckOptions::default()).await {
+                                        error!("Failed to acknowledge message: {}", e);
                                     }
-                                }
-
-                                if let Err(e) = delivery.ack(BasicAckOptions::default()).await {
-                                    error!("Failed to acknowledge message: {}", e);
-                                }
+                                });
                             }
                             Err(e) => {
                                 error!("Failed to parse message: {}", e);
@@ -111,28 +126,19 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn process_extract_sound(message: &TaskMessage) -> Result<serde_json::Value> {
-    let video_path = message
-        .payload
-        .get("video_path")
-        .and_then(|v| v.as_str())
-        .context("Missing 'video_path' field in payload")?;
+async fn process_extract_sound(payload: &ExtractSoundPayload, task_id: &uuid::Uuid) -> Result<serde_json::Value> {
+    info!("Extracting sound from video: {}", payload.file_name);
 
-    info!("Extracting sound from video: {}", video_path);
-
+    // TODO: Real extraction implementation
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
-    let audio_path = format!("/audio/{}.mp3", message.task_id);
+    let audio_file_name = format!("{}.mp3", task_id);
 
-    info!("Sound extracted successfully to: {}", audio_path);
+    info!("Sound extracted successfully to: {}", audio_file_name);
 
     Ok(serde_json::json!({
-        "audio_path": audio_path,
-        "video_path": video_path,
-        "format": "mp3",
-        "bitrate": "320kbps",
-        "duration_seconds": 120,
-        "size_bytes": 3840000,
+        "stream_id": payload.stream_id,
+        "audio_files": [audio_file_name],
     }))
 }
 

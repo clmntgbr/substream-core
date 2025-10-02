@@ -16,6 +16,11 @@ chrono = { workspace = true }
 anyhow = { workspace = true }
 futures = { workspace = true }
 
+# S3
+aws-config = { version = "1.5", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1.50"
+aws-credential-types = "1.2"
+
 [dev-dependencies]
 tokio-test = "0.4"
 

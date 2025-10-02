@@ -7,13 +7,32 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{error, info, warn};
 use uuid::Uuid;
+use aws_sdk_s3::Client as AwsS3Client;
+use aws_sdk_s3::config::{Credentials, Region};
+use aws_sdk_s3::primitives::ByteStream;
+use std::path::Path;
 
+/// Common message structure for all tasks (generic over payload type)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskMessage {
+pub struct TaskMessage<T> {
     pub task_id: Uuid,
-    pub payload: serde_json::Value,
+    pub payload: T,
     pub webhook_url_success: String,
     pub webhook_url_failure: String,
+}
+
+/// Payload for get_video task
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetVideoPayload {
+    pub url: String,
+    pub stream_id: String,
+}
+
+/// Payload for extract_sound task
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtractSoundPayload {
+    pub file_name: String,
+    pub stream_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,6 +213,12 @@ impl RabbitMQClient {
 /// HTTP client for sending webhook notifications
 pub struct WebhookClient {
     client: reqwest::Client,
+    auth_token: Option<String>,
+}
+
+/// Convert snake_case to lowercase concatenated
+fn to_name_format(s: &str) -> String {
+    s.replace('_', "")
 }
 
 impl WebhookClient {
@@ -203,6 +228,7 @@ impl WebhookClient {
                 .timeout(Duration::from_secs(30))
                 .build()
                 .unwrap_or_default(),
+            auth_token: std::env::var("CORE_TOKEN").ok(),
         }
     }
 
@@ -213,7 +239,13 @@ impl WebhookClient {
             url, response.task_id, response.status
         );
 
-        match self.client.post(url).json(response).send().await {
+        let mut request = self.client.post(url).json(response);
+        
+        if let Some(token) = &self.auth_token {
+            request = request.header("X-Authentication-Token", token);
+        }
+
+        match request.send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
                     info!("Webhook sent successfully to {}", url);
@@ -238,24 +270,47 @@ impl WebhookClient {
         }
     }
 
-    /// Send a success webhook
     pub async fn send_success(
         &self,
         url: &str,
         task_id: Uuid,
         task_type: &str,
-        result: serde_json::Value,
+        mut result: serde_json::Value,
     ) -> Result<()> {
-        let response = WebhookResponse {
-            task_id,
-            task_type: task_type.to_string(),
-            status: TaskStatus::Success,
-            result: Some(result),
-            error: None,
-            completed_at: Utc::now(),
-        };
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("task_id".to_string(), serde_json::json!(task_id));
+            let name = format!("{}success", to_name_format(task_type));
+            obj.insert("name".to_string(), serde_json::json!(name));
+        }
 
-        self.send(url, &response).await
+        info!("Sending success webhook to {} for task {}", url, task_id);
+        info!("Response: {:?}", result);
+
+        let mut request = self.client.post(url)
+            .header("Content-Type", "application/json")
+            .json(&result);
+        
+        if let Some(token) = &self.auth_token {
+            request = request.header("X-Authentication-Token", token);
+        }
+
+        match request.send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    info!("Webhook sent successfully to {}", url);
+                    Ok(())
+                } else {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    error!("Webhook failed with status {}: {}", status, body);
+                    Err(anyhow::anyhow!("Webhook request failed with status {}", status))
+                }
+            }
+            Err(e) => {
+                error!("Failed to send webhook to {}: {}", url, e);
+                Err(anyhow::anyhow!("Failed to send webhook: {}", e))
+            }
+        }
     }
 
     /// Send an error webhook
@@ -275,13 +330,194 @@ impl WebhookClient {
             completed_at: Utc::now(),
         };
 
+        info!("Sending error webhook to {} for task {} with status {:?}", url, task_id, response.status);
+        info!("Response: {:?}", response);
+        
         self.send(url, &response).await
+    }
+    
+    /// Send an error webhook with stream_id (direct payload without wrapper)
+    pub async fn send_error_with_stream(
+        &self,
+        url: &str,
+        task_id: Uuid,
+        task_type: &str,
+        stream_id: &str,
+    ) -> Result<()> {
+        let name = format!("{}failure", to_name_format(task_type));
+        
+        let payload = serde_json::json!({
+            "task_id": task_id,
+            "stream_id": stream_id,
+            "name": name,
+        });
+
+        info!("Sending error webhook to {} for task {}", url, task_id);
+        info!("Response: {:?}", payload);
+
+        let mut request = self.client.post(url)
+            .header("Content-Type", "application/json")
+            .json(&payload);
+        
+        if let Some(token) = &self.auth_token {
+            request = request.header("X-Authentication-Token", token);
+        }
+
+        match request.send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    info!("Webhook sent successfully to {}", url);
+                    Ok(())
+                } else {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    error!("Webhook failed with status {}: {}", status, body);
+                    Err(anyhow::anyhow!("Webhook request failed with status {}", status))
+                }
+            }
+            Err(e) => {
+                error!("Failed to send webhook to {}: {}", url, e);
+                Err(anyhow::anyhow!("Failed to send webhook: {}", e))
+            }
+        }
     }
 }
 
 impl Default for WebhookClient {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// S3 client for file operations
+pub struct S3Client {
+    client: AwsS3Client,
+    bucket_name: String,
+}
+
+impl S3Client {
+    /// Create a new S3 client from environment variables
+    pub async fn from_env() -> Result<Self> {
+        let access_key = std::env::var("S3_ACCESS_KEY")
+            .context("S3_ACCESS_KEY environment variable not set")?;
+        let secret_key = std::env::var("S3_SECRET_KEY")
+            .context("S3_SECRET_KEY environment variable not set")?;
+        let endpoint = std::env::var("S3_ENDPOINT")
+            .context("S3_ENDPOINT environment variable not set")?;
+        let region = std::env::var("S3_REGION").unwrap_or("us-east-1".to_string());
+        let bucket_name = std::env::var("S3_BUCKET_NAME")
+            .context("S3_BUCKET_NAME environment variable not set")?;
+
+        Self::new(&access_key, &secret_key, &endpoint, &region, &bucket_name).await
+    }
+
+    /// Create a new S3 client with explicit configuration
+    pub async fn new(
+        access_key: &str,
+        secret_key: &str,
+        endpoint: &str,
+        region: &str,
+        bucket_name: &str,
+    ) -> Result<Self> {
+        let credentials = Credentials::new(
+            access_key,
+            secret_key,
+            None,
+            None,
+            "custom",
+        );
+
+        let config = aws_sdk_s3::Config::builder()
+            .credentials_provider(credentials)
+            .endpoint_url(endpoint)
+            .region(Region::new(region.to_string()))
+            .force_path_style(true) // Required for MinIO and similar S3-compatible services
+            .build();
+
+        let client = AwsS3Client::from_conf(config);
+
+        Ok(Self {
+            client,
+            bucket_name: bucket_name.to_string(),
+        })
+    }
+
+    /// Upload a file to S3
+    pub async fn upload_file(&self, file_path: &str, object_name: &str) -> Result<()> {
+        info!("Uploading S3 file: {}", file_path);
+
+        let body = ByteStream::from_path(Path::new(file_path))
+            .await
+            .context("Failed to read file for upload")?;
+
+        match self.client
+            .put_object()
+            .bucket(&self.bucket_name)
+            .key(object_name)
+            .body(body)
+            .send()
+            .await
+        {
+            Ok(_) => {
+                info!("Successfully uploaded file {} to S3", file_path);
+                Ok(())
+            }
+            Err(e) => {
+                error!("Error uploading S3 file {} ({:?})", file_path, e);
+                Err(anyhow::anyhow!("Failed to upload file: {:?}", e))
+            }
+        }
+    }
+
+    /// Download a file from S3
+    pub async fn download_file(&self, object_name: &str, file_path: &str) -> Result<()> {
+        info!("Downloading S3 file: {}", file_path);
+
+        match self.client
+            .get_object()
+            .bucket(&self.bucket_name)
+            .key(object_name)
+            .send()
+            .await
+        {
+            Ok(output) => {
+                let data = output.body.collect().await
+                    .context("Failed to collect file data")?;
+                
+                tokio::fs::write(file_path, data.into_bytes())
+                    .await
+                    .context("Failed to write file")?;
+
+                info!("Successfully downloaded file {} from S3", file_path);
+                Ok(())
+            }
+            Err(e) => {
+                error!("Error downloading S3 file {} ({:?})", file_path, e);
+                Err(anyhow::anyhow!("Failed to download file: {:?}", e))
+            }
+        }
+    }
+
+    /// Delete a file from S3
+    pub async fn delete_file(&self, object_name: &str) -> Result<()> {
+        info!("Deleting S3 file: {}", object_name);
+
+        match self.client
+            .delete_object()
+            .bucket(&self.bucket_name)
+            .key(object_name)
+            .send()
+            .await
+        {
+            Ok(_) => {
+                info!("Successfully deleted file {} from S3", object_name);
+                Ok(())
+            }
+            Err(e) => {
+                error!("Error deleting S3 file {} ({:?})", object_name, e);
+                Err(anyhow::anyhow!("Failed to delete file: {:?}", e))
+            }
+        }
     }
 }
 
@@ -312,14 +548,16 @@ mod tests {
         let msg = TaskMessage {
             task_id: Uuid::new_v4(),
             payload: serde_json::json!({"url": "https://example.com/video.mp4"}),
-            webhook_url: "https://example.com/webhook".to_string(),
+            webhook_url_success: "https://example.com/webhook".to_string(),
+            webhook_url_failure: "https://example.com/webhook".to_string(),
         };
 
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: TaskMessage = serde_json::from_str(&json).unwrap();
 
         assert_eq!(msg.task_id, deserialized.task_id);
-        assert_eq!(msg.webhook_url, deserialized.webhook_url);
+        assert_eq!(msg.webhook_url_success, deserialized.webhook_url_success);
+        assert_eq!(msg.webhook_url_failure, deserialized.webhook_url_failure);
     }
 
     #[test]
