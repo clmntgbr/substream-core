@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  task-get-video:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        PACKAGE_NAME: task-get-video
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/app/target
+    container_name: substream-task-get-video-dev
+    environment:
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USER: ${RABBITMQ_USER:-rabbitmq}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-rabbitmq}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-rabbitmq}
+      QUEUE_GET_VIDEO: ${QUEUE_GET_VIDEO:-core.get_video}
+      RUST_LOG: ${RUST_LOG:-info}
+      MAX_RETRIES: ${MAX_RETRIES:-3}
+      RETRY_DELAY_SECONDS: ${RETRY_DELAY_SECONDS:-5}
+    restart: unless-stopped
+    networks:
+      - substream-network
+
+  task-extract-sound:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        PACKAGE_NAME: task-extract-sound
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/app/target
+    container_name: substream-task-extract-sound-dev
+    environment:
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USER: ${RABBITMQ_USER:-rabbitmq}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-rabbitmq}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-rabbitmq}
+      QUEUE_EXTRACT_SOUND: ${QUEUE_EXTRACT_SOUND:-core.extract_sound}
+      RUST_LOG: ${RUST_LOG:-info}
+      MAX_RETRIES: ${MAX_RETRIES:-3}
+      RETRY_DELAY_SECONDS: ${RETRY_DELAY_SECONDS:-5}
+    restart: unless-stopped
+    networks:
+      - substream-network
+
+volumes:
+  cargo-cache:
+  target-cache:
+
+networks:
+  substream-network:
+    external: true
+
