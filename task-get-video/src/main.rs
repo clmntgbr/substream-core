@@ -141,7 +141,7 @@ async fn process_get_video(
     let temp_dir = "/tmp/videos";
     tokio::fs::create_dir_all(temp_dir).await?;
     
-    let output_template = format!("{}/{}.%(ext)s", temp_dir, task_id);
+    let output_template = format!("{}/{}.%(ext)s", temp_dir, payload.stream_id);
 
     let metadata_output = Command::new("yt-dlp")
         .arg("--dump-json")
@@ -235,7 +235,7 @@ async fn process_get_video(
         return Err(anyhow::anyhow!("yt-dlp process failed with status: {}", status));
     }
 
-    let file_name = format!("{}.mp4", task_id);
+    let file_name = format!("{}.mp4", payload.stream_id);
     let temp_file_path = format!("{}/{}", temp_dir, file_name);
 
     let file_metadata = tokio::fs::metadata(&temp_file_path)
