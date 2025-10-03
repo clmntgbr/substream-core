@@ -7,23 +7,8 @@ services:
       dockerfile: Dockerfile
     command: /app/task-get-video
     container_name: substream-task-get-video
-    environment:
-      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
-      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
-      RABBITMQ_USER: ${RABBITMQ_USER:-rabbitmq}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-rabbitmq}
-      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-rabbitmq}
-      QUEUE_GET_VIDEO: ${QUEUE_GET_VIDEO:-core.get_video}
-      RUST_LOG: ${RUST_LOG:-info}
-      MAX_RETRIES: ${MAX_RETRIES:-3}
-      RETRY_DELAY_SECONDS: ${RETRY_DELAY_SECONDS:-5}
-      MAX_CONCURRENT_TASKS: ${MAX_CONCURRENT_TASKS:-10}
-      CORE_TOKEN: ${CORE_TOKEN}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
-      S3_SECRET_KEY: ${S3_SECRET_KEY}
-      S3_ENDPOINT: ${S3_ENDPOINT}
-      S3_REGION: ${S3_REGION:-us-east-1}
-      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+    env_file:
+      - .env
     healthcheck:
       test: ["CMD", "pgrep", "-f", "task-get-video"]
       interval: 30s
@@ -40,23 +25,8 @@ services:
       dockerfile: Dockerfile
     command: /app/task-extract-sound
     container_name: substream-task-extract-sound
-    environment:
-      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
-      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
-      RABBITMQ_USER: ${RABBITMQ_USER:-rabbitmq}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-rabbitmq}
-      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-rabbitmq}
-      QUEUE_EXTRACT_SOUND: ${QUEUE_EXTRACT_SOUND:-core.extract_sound}
-      RUST_LOG: ${RUST_LOG:-info}
-      MAX_RETRIES: ${MAX_RETRIES:-3}
-      RETRY_DELAY_SECONDS: ${RETRY_DELAY_SECONDS:-5}
-      MAX_CONCURRENT_TASKS: ${MAX_CONCURRENT_TASKS:-10}
-      CORE_TOKEN: ${CORE_TOKEN}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
-      S3_SECRET_KEY: ${S3_SECRET_KEY}
-      S3_ENDPOINT: ${S3_ENDPOINT}
-      S3_REGION: ${S3_REGION:-us-east-1}
-      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+    env_file:
+      - .env
     healthcheck:
       test: ["CMD", "pgrep", "-f", "task-extract-sound"]
       interval: 30s

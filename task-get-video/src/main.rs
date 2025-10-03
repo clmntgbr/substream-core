@@ -137,6 +137,7 @@ async fn process_get_video(
     s3_client: &S3Client,
 ) -> Result<serde_json::Value> {
     info!("Downloading video from: {}", payload.url);
+    info!("Task ID: {}", task_id);
 
     let temp_dir = "/tmp/videos";
     tokio::fs::create_dir_all(temp_dir).await?;

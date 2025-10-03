@@ -139,6 +139,7 @@ async fn process_extract_sound(
     s3_client: &S3Client,
 ) -> Result<serde_json::Value> {
     info!("Extracting sound from video: {}", payload.file_name);
+    info!("Task ID: {}", task_id);
 
     let temp_dir = "/tmp/audio";
     tokio::fs::create_dir_all(temp_dir).await?;
