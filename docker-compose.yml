@@ -2,11 +2,11 @@ version: '3.8'
 
 services:
   task-get-video:
+    container_name: ${PROJECT_NAME}-task-get-video
     build:
       context: .
       dockerfile: Dockerfile
     command: /app/task-get-video
-    container_name: substream-task-get-video
     env_file:
       - .env
     healthcheck:
@@ -20,11 +20,11 @@ services:
       - substream-network
 
   task-extract-sound:
+    container_name: ${PROJECT_NAME}-task-extract-sound
     build:
       context: .
       dockerfile: Dockerfile
     command: /app/task-extract-sound
-    container_name: substream-task-extract-sound
     env_file:
       - .env
     healthcheck:
@@ -38,11 +38,11 @@ services:
       - substream-network
 
   task-generate-subtitle:
+    container_name: ${PROJECT_NAME}-task-generate-subtitle
     build:
       context: .
       dockerfile: Dockerfile
     command: /app/task-generate-subtitle
-    container_name: substream-task-generate-subtitle
     env_file:
       - .env
     healthcheck:
@@ -56,11 +56,11 @@ services:
       - substream-network
 
   task-transform-subtitle:
+    container_name: ${PROJECT_NAME}-task-transform-subtitle
     build:
       context: .
       dockerfile: Dockerfile
     command: /app/task-transform-subtitle
-    container_name: substream-task-transform-subtitle
     env_file:
       - .env
     healthcheck:
