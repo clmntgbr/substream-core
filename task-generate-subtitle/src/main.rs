@@ -136,9 +136,7 @@ async fn process_generate_subtitle(
 
     Ok(serde_json::json!({
         "stream_id": payload.stream_id,
-        "status": "received",
-        "audio_files_count": payload.audio_files.len(),
-        "message": "Payload received successfully. Subtitle generation not yet implemented.",
+        "subtitle": "Subtitle generation not yet implemented",
     }))
 }
 
