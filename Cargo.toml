@@ -4,6 +4,7 @@ members = [
     "task-get-video",
     "task-extract-sound",
     "task-generate-subtitle",
+    "task-transform-subtitle",
 ]
 resolver = "2"
 

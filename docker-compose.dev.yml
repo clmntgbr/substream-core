@@ -52,6 +52,23 @@ services:
     networks:
       - substream-network
 
+  task-transform-subtitle:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        PACKAGE_NAME: task-transform-subtitle
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/app/target
+    container_name: substream-task-transform-subtitle-dev
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - substream-network
+
 volumes:
   cargo-cache:
   target-cache:

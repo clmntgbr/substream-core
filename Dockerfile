@@ -14,6 +14,7 @@ COPY shared ./shared
 COPY task-get-video ./task-get-video
 COPY task-extract-sound ./task-extract-sound
 COPY task-generate-subtitle ./task-generate-subtitle
+COPY task-transform-subtitle ./task-transform-subtitle
 
 # Build all packages in workspace
 RUN cargo build --release
@@ -46,6 +47,7 @@ RUN useradd -m -u 1000 appuser && \
 COPY --from=builder /app/target/release/task-get-video /app/task-get-video
 COPY --from=builder /app/target/release/task-extract-sound /app/task-extract-sound
 COPY --from=builder /app/target/release/task-generate-subtitle /app/task-generate-subtitle
+COPY --from=builder /app/target/release/task-transform-subtitle /app/task-transform-subtitle
 
 # Switch to non-root user
 USER appuser

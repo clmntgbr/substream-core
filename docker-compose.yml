@@ -55,6 +55,24 @@ services:
     networks:
       - substream-network
 
+  task-transform-subtitle:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: /app/task-transform-subtitle
+    container_name: substream-task-transform-subtitle
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "task-transform-subtitle"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - substream-network
+
 networks:
   substream-network:
     external: true

@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use lapin::options::BasicAckOptions;
-use shared::{GenerateSubtitlePayload, RabbitMQClient, RabbitMQConfig, TaskMessage, WebhookClient};
+use shared::{TransformSubtitlePayload, RabbitMQClient, RabbitMQConfig, TaskMessage, WebhookClient};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{error, info};
 
-const TASK_TYPE: &str = "generate_subtitle";
+const TASK_TYPE: &str = "transform_subtitle";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -16,7 +16,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    info!("Starting task-generate-subtitle service");
+    info!("Starting task-transform-subtitle service");
 
     dotenvy::dotenv().ok();
 
@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
 
     let webhook_client = Arc::new(WebhookClient::new());
 
-    let queue_name = std::env::var("QUEUE_GENERATE_SUBTITLE").unwrap_or("core.generate_subtitle".to_string());
+    let queue_name = std::env::var("QUEUE_TRANSFORM_SUBTITLE").unwrap_or("core.transform_subtitle".to_string());
     
     let max_concurrent = std::env::var("MAX_CONCURRENT_TASKS")
         .unwrap_or("10".to_string())
@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
             Some(delivery) = consumer.next() => {
                 match delivery {
                     Ok(delivery) => {
-                        match serde_json::from_slice::<TaskMessage<GenerateSubtitlePayload>>(&delivery.data) {
+                        match serde_json::from_slice::<TaskMessage<TransformSubtitlePayload>>(&delivery.data) {
                             Ok(message) => {
                                 let webhook_client = Arc::clone(&webhook_client);
                                 let semaphore = Arc::clone(&semaphore);
@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
                                     info!("Processing stream: {}", message.payload.stream_id);
                                     info!("Task ID: {}", message.task_id);
 
-                                    match process_generate_subtitle(&message.payload, &message.task_id).await {
+                                    match process_transform_subtitle(&message.payload, &message.task_id).await {
                                         Ok(result) => {
                                             info!("Stream {} completed successfully", message.payload.stream_id);
 
@@ -124,19 +124,22 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn process_generate_subtitle(
-    payload: &GenerateSubtitlePayload, 
+async fn process_transform_subtitle(
+    payload: &TransformSubtitlePayload, 
     task_id: &uuid::Uuid,
 ) -> Result<serde_json::Value> {
     info!("Received payload:");
     info!("  Task ID: {}", task_id);
     info!("  Stream ID: {}", payload.stream_id);
-    info!("  Audio files count: {}", payload.audio_files.len());
-    info!("  Audio files: {:?}", payload.audio_files);
+    info!("  Subtitle SRT file: {}", payload.subtitle_srt_file);
+
+    let subtitle_ass_file = payload.subtitle_srt_file.replace(".srt", ".ass");
+
+    info!("Transforming {} to {}", payload.subtitle_srt_file, subtitle_ass_file);
 
     Ok(serde_json::json!({
         "stream_id": payload.stream_id,
-        "subtitle_srt_file": format!("{}.srt", payload.stream_id),
+        "subtitle_ass_file": subtitle_ass_file,
     }))
 }
 
