@@ -10,8 +10,6 @@ use std::path::PathBuf;
 
 const TASK_TYPE: &str = "generate_subtitle";
 const MAX_PARALLEL_FILES: usize = 4;
-
-// AssemblyAI API URLs
 const ASSEMBLYAI_UPLOAD_URL: &str = "https://api.assemblyai.com/v2/upload";
 const ASSEMBLYAI_TRANSCRIPT_URL: &str = "https://api.assemblyai.com/v2/transcript";
 const ASSEMBLYAI_SRT_CHARS_PER_CAPTION: u32 = 32;
@@ -145,12 +143,10 @@ async fn process_generate_subtitle(
     let s3_client = Arc::new(S3Client::from_env().await
         .context("Failed to create S3 client")?);
 
-    // Create temporary directory for processing
     let temp_dir = std::env::temp_dir().join(format!("subtitle_{}", task_id));
     tokio::fs::create_dir_all(&temp_dir).await
         .context("Failed to create temporary directory")?;
 
-    // Process files in parallel with max concurrent limit
     let semaphore = Arc::new(Semaphore::new(MAX_PARALLEL_FILES));
     let mut tasks = Vec::new();
 
@@ -172,6 +168,7 @@ async fn process_generate_subtitle(
                 &api_key,
                 &s3_path,
                 &temp_dir,
+                &audio_file,
                 index,
             ).await
         });
@@ -179,7 +176,6 @@ async fn process_generate_subtitle(
         tasks.push(task);
     }
 
-    // Wait for all tasks to complete
     let mut subtitle_parts = Vec::new();
     for (index, task) in tasks.into_iter().enumerate() {
         match task.await {
@@ -188,33 +184,27 @@ async fn process_generate_subtitle(
             }
             Ok(Err(e)) => {
                 error!("Failed to process file {}: {}", index, e);
-                // Clean up temp directory
                 let _ = tokio::fs::remove_dir_all(&temp_dir).await;
                 return Err(e);
             }
             Err(e) => {
                 error!("Task {} panicked: {}", index, e);
-                // Clean up temp directory
                 let _ = tokio::fs::remove_dir_all(&temp_dir).await;
                 return Err(anyhow::anyhow!("Task {} panicked: {}", index, e));
             }
         }
     }
 
-    // Sort by index to maintain order
     subtitle_parts.sort_by_key(|(index, _)| *index);
     
-    // Merge subtitles
     let merged_srt = merge_subtitles(subtitle_parts.into_iter().map(|(_, s)| s).collect())?;
 
-    // Upload merged SRT to S3
     let srt_filename = format!("{}.srt", payload.stream_id);
     let srt_path = temp_dir.join(&srt_filename);
     
     tokio::fs::write(&srt_path, &merged_srt).await
         .context("Failed to write merged SRT file")?;
 
-    // Construct S3 path: stream_id/stream_id.srt
     let s3_srt_path = format!("{}/{}", payload.stream_id, srt_filename);
     
     s3_client.as_ref().upload_file(
@@ -223,17 +213,15 @@ async fn process_generate_subtitle(
     ).await
         .context("Failed to upload SRT to S3")?;
 
-    // Clean up temp directory
     tokio::fs::remove_dir_all(&temp_dir).await
         .context("Failed to clean up temporary directory")?;
 
     Ok(serde_json::json!({
         "stream_id": payload.stream_id,
-        "subtitle_srt_file": s3_srt_path,
+        "subtitle_srt_file_name": srt_filename,
     }))
 }
 
-// AssemblyAI API structures
 #[derive(Debug, Serialize)]
 struct AssemblyAITranscriptRequest {
     audio_url: String,
@@ -263,8 +251,8 @@ struct AssemblyAITranscriptStatusResponse {
 struct SubtitleEntry {
     #[allow(dead_code)]
     index: usize,
-    start_time: i64,  // milliseconds
-    end_time: i64,    // milliseconds
+    start_time: i64,
+    end_time: i64,
     text: String,
 }
 
@@ -273,29 +261,24 @@ async fn process_single_audio_file(
     api_key: &str,
     audio_file: &str,
     temp_dir: &PathBuf,
-    index: usize,
+    original_filename: &str,
+    _index: usize,
 ) -> Result<Vec<SubtitleEntry>> {
-    // Download file from S3
-    let local_file_path = temp_dir.join(format!("audio_{}.wav", index));
+    let local_file_path = temp_dir.join(original_filename);
     s3_client.download_file(audio_file, local_file_path.to_str().unwrap()).await
         .context("Failed to download audio file from S3")?;
 
-    // Upload to AssemblyAI
     let upload_url = upload_to_assemblyai(api_key, &local_file_path).await
         .context("Failed to upload file to AssemblyAI")?;
 
-    // Start transcription
     let transcript_id = start_transcription(api_key, &upload_url).await
         .context("Failed to start transcription")?;
 
-    // Poll for completion
     let srt_content = poll_transcription(api_key, &transcript_id).await
         .context("Failed to get transcription result")?;
 
-    // Parse SRT content
     let subtitle_entries = parse_srt(&srt_content)?;
 
-    // Clean up local file
     let _ = tokio::fs::remove_file(&local_file_path).await;
 
     Ok(subtitle_entries)
@@ -362,7 +345,6 @@ async fn poll_transcription(api_key: &str, transcript_id: &str) -> Result<String
     let client = reqwest::Client::new();
     let status_url = format!("{}/{}", ASSEMBLYAI_TRANSCRIPT_URL, transcript_id);
 
-    // Poll every 3 seconds
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
@@ -462,7 +444,6 @@ fn parse_srt(srt_content: &str) -> Result<Vec<SubtitleEntry>> {
 }
 
 fn parse_timestamp_line(line: &str) -> Result<(i64, i64)> {
-    // Format: 00:00:00,000 --> 00:00:02,500
     let parts: Vec<&str> = line.split(" --> ").collect();
     if parts.len() != 2 {
         return Err(anyhow::anyhow!("Invalid timestamp line: {}", line));
@@ -475,7 +456,6 @@ fn parse_timestamp_line(line: &str) -> Result<(i64, i64)> {
 }
 
 fn parse_timestamp(ts: &str) -> Result<i64> {
-    // Format: 00:00:00,000
     let parts: Vec<&str> = ts.split(',').collect();
     if parts.len() != 2 {
         return Err(anyhow::anyhow!("Invalid timestamp: {}", ts));
@@ -510,22 +490,18 @@ fn format_timestamp(ms: i64) -> String {
 
 fn merge_subtitles(parts: Vec<Vec<SubtitleEntry>>) -> Result<String> {
     let mut all_entries = Vec::new();
-    
-    // Each audio file is 5 minutes (300 seconds = 300000 milliseconds)
     const CHUNK_DURATION_MS: i64 = 300_000;
 
     for (part_index, part) in parts.into_iter().enumerate() {
         let time_offset = (part_index as i64) * CHUNK_DURATION_MS;
         
         for mut entry in part {
-            // Adjust timestamps based on which chunk this is
             entry.start_time += time_offset;
             entry.end_time += time_offset;
             all_entries.push(entry);
         }
     }
 
-    // Generate SRT content
     let mut srt_content = String::new();
     for (new_index, entry) in all_entries.iter().enumerate() {
         srt_content.push_str(&format!("{}\n", new_index + 1));

@@ -9,6 +9,26 @@ use tokio::process::Command;
 
 const TASK_TYPE: &str = "extract_sound";
 
+struct CleanupGuard<F: FnOnce()> {
+    cleanup_fn: Option<F>,
+}
+
+impl<F: FnOnce()> CleanupGuard<F> {
+    fn new(cleanup_fn: F) -> Self {
+        Self {
+            cleanup_fn: Some(cleanup_fn),
+        }
+    }
+}
+
+impl<F: FnOnce()> Drop for CleanupGuard<F> {
+    fn drop(&mut self) {
+        if let Some(cleanup_fn) = self.cleanup_fn.take() {
+            cleanup_fn();
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -133,11 +153,44 @@ async fn main() -> Result<()> {
 
 async fn process_extract_sound(
     payload: &ExtractSoundPayload, 
-    task_id: &uuid::Uuid,
+    _task_id: &uuid::Uuid,
     s3_client: &S3Client,
 ) -> Result<serde_json::Value> {
     let temp_dir = "/tmp/audio";
     tokio::fs::create_dir_all(temp_dir).await?;
+    
+    let temp_dir_cleanup = temp_dir.to_string();
+    let stream_id_cleanup = payload.stream_id.clone();
+    let file_name_cleanup = payload.file_name.clone();
+    let _cleanup_guard = CleanupGuard::new(move || {
+        let temp_dir = temp_dir_cleanup.clone();
+        let stream_id = stream_id_cleanup.clone();
+        let file_name = file_name_cleanup.clone();
+        tokio::spawn(async move {
+            let temp_video_path = format!("{}/{}", temp_dir, file_name);
+            if tokio::fs::try_exists(&temp_video_path).await.unwrap_or(false) {
+                if let Err(e) = tokio::fs::remove_file(&temp_video_path).await {
+                    error!("Failed to remove temp video during cleanup: {}", e);
+                }
+            }
+            
+            let mut segment_index = 1;
+            loop {
+                let segment_file_name = format!("{}_{:03}.wav", stream_id, segment_index);
+                let segment_path = format!("{}/{}", temp_dir, segment_file_name);
+                
+                if !tokio::fs::try_exists(&segment_path).await.unwrap_or(false) {
+                    break;
+                }
+                
+                if let Err(e) = tokio::fs::remove_file(&segment_path).await {
+                    error!("Failed to remove temp audio segment during cleanup: {}", e);
+                }
+                
+                segment_index += 1;
+            }
+        });
+    });
 
     let video_s3_key = format!("{}/{}", payload.stream_id, payload.file_name);
     let temp_video_path = format!("{}/{}", temp_dir, payload.file_name);
@@ -183,6 +236,7 @@ async fn process_extract_sound(
 
     let mut audio_files = Vec::new();
     let mut segment_index = 1;
+    let mut temp_segments = Vec::new();
 
     loop {
         let segment_file_name = format!("{}_{:03}.wav", payload.stream_id, segment_index);
@@ -192,6 +246,7 @@ async fn process_extract_sound(
             break;
         }
 
+        temp_segments.push(segment_path.clone());
         let s3_key = format!("{}/{}", payload.stream_id, segment_file_name);
 
         let upload_result = s3_client
@@ -202,7 +257,14 @@ async fn process_extract_sound(
             error!("Failed to remove temp audio segment: {}", e);
         }
 
-        upload_result.context("Failed to upload audio segment to S3")?;
+        if let Err(e) = upload_result {
+            for remaining_segment in temp_segments {
+                if let Err(cleanup_err) = tokio::fs::remove_file(&remaining_segment).await {
+                    error!("Failed to remove temp audio segment during cleanup: {}", cleanup_err);
+                }
+            }
+            return Err(e.context("Failed to upload audio segment to S3"));
+        }
 
         audio_files.push(segment_file_name);
         segment_index += 1;

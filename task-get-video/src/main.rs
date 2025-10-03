@@ -10,6 +10,26 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 const TASK_TYPE: &str = "get_video";
 
+struct CleanupGuard<F: FnOnce()> {
+    cleanup_fn: Option<F>,
+}
+
+impl<F: FnOnce()> CleanupGuard<F> {
+    fn new(cleanup_fn: F) -> Self {
+        Self {
+            cleanup_fn: Some(cleanup_fn),
+        }
+    }
+}
+
+impl<F: FnOnce()> Drop for CleanupGuard<F> {
+    fn drop(&mut self) {
+        if let Some(cleanup_fn) = self.cleanup_fn.take() {
+            cleanup_fn();
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -134,11 +154,27 @@ async fn main() -> Result<()> {
 
 async fn process_get_video(
     payload: &GetVideoPayload,
-    task_id: &uuid::Uuid,
+    _task_id: &uuid::Uuid,
     s3_client: &S3Client,
 ) -> Result<serde_json::Value> {
     let temp_dir = "/tmp/videos";
     tokio::fs::create_dir_all(temp_dir).await?;
+    
+    let temp_dir_cleanup = temp_dir.to_string();
+    let stream_id_cleanup = payload.stream_id.clone();
+    let _cleanup_guard = CleanupGuard::new(move || {
+        let temp_dir = temp_dir_cleanup.clone();
+        let stream_id = stream_id_cleanup.clone();
+        tokio::spawn(async move {
+            let file_name = format!("{}.mp4", stream_id);
+            let temp_file_path = format!("{}/{}", temp_dir, file_name);
+            if tokio::fs::try_exists(&temp_file_path).await.unwrap_or(false) {
+                if let Err(e) = tokio::fs::remove_file(&temp_file_path).await {
+                    error!("Failed to remove temporary file during cleanup: {}", e);
+                }
+            }
+        });
+    });
     
     let output_template = format!("{}/{}.%(ext)s", temp_dir, payload.stream_id);
 
@@ -213,6 +249,11 @@ async fn process_get_video(
     let status = child.wait().await.context("Failed to wait for yt-dlp process")?;
 
     if !status.success() {
+        let file_name = format!("{}.mp4", payload.stream_id);
+        let temp_file_path = format!("{}/{}", temp_dir, file_name);
+        if let Err(e) = tokio::fs::remove_file(&temp_file_path).await {
+            error!("Failed to remove temporary file after yt-dlp failure: {}", e);
+        }
         return Err(anyhow::anyhow!("yt-dlp process failed with status: {}", status));
     }
 

@@ -46,7 +46,7 @@ pub struct GenerateSubtitlePayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransformSubtitlePayload {
     pub stream_id: String,
-    pub subtitle_srt_file: String,
+    pub subtitle_srt_file_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
