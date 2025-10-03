@@ -11,6 +11,11 @@ use std::path::PathBuf;
 const TASK_TYPE: &str = "generate_subtitle";
 const MAX_PARALLEL_FILES: usize = 4;
 
+// AssemblyAI API URLs
+const ASSEMBLYAI_UPLOAD_URL: &str = "https://api.assemblyai.com/v2/upload";
+const ASSEMBLYAI_TRANSCRIPT_URL: &str = "https://api.assemblyai.com/v2/transcript";
+const ASSEMBLYAI_SRT_CHARS_PER_CAPTION: u32 = 32;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -303,7 +308,7 @@ async fn upload_to_assemblyai(api_key: &str, file_path: &PathBuf) -> Result<Stri
         .context("Failed to read audio file")?;
 
     let response = client
-        .post("https://api.assemblyai.com/v2/upload")
+        .post(ASSEMBLYAI_UPLOAD_URL)
         .header("authorization", api_key)
         .body(file_content)
         .send()
@@ -335,7 +340,7 @@ async fn start_transcription(api_key: &str, audio_url: &str) -> Result<String> {
     };
 
     let response = client
-        .post("https://api.assemblyai.com/v2/transcript")
+        .post(ASSEMBLYAI_TRANSCRIPT_URL)
         .header("authorization", api_key)
         .json(&request_body)
         .send()
@@ -355,7 +360,7 @@ async fn start_transcription(api_key: &str, audio_url: &str) -> Result<String> {
 
 async fn poll_transcription(api_key: &str, transcript_id: &str) -> Result<String> {
     let client = reqwest::Client::new();
-    let status_url = format!("https://api.assemblyai.com/v2/transcript/{}", transcript_id);
+    let status_url = format!("{}/{}", ASSEMBLYAI_TRANSCRIPT_URL, transcript_id);
 
     // Poll every 3 seconds
     loop {
@@ -382,10 +387,11 @@ async fn poll_transcription(api_key: &str, transcript_id: &str) -> Result<String
 
         match status_response.status.as_str() {
             "completed" => {
-                // Get SRT with 32 chars per caption
                 let srt_url = format!(
-                    "https://api.assemblyai.com/v2/transcript/{}/srt?chars_per_caption=32",
-                    transcript_id
+                    "{}/{}/srt?chars_per_caption={}",
+                    ASSEMBLYAI_TRANSCRIPT_URL,
+                    transcript_id,
+                    ASSEMBLYAI_SRT_CHARS_PER_CAPTION
                 );
                 
                 let srt_response = client
@@ -399,7 +405,6 @@ async fn poll_transcription(api_key: &str, transcript_id: &str) -> Result<String
                     let status = srt_response.status();
                     let error_text = srt_response.text().await.unwrap_or_default();
                     
-                    // Handle empty transcript case (no speech detected)
                     if status.as_u16() == 400 && error_text.contains("Transcript text is empty") {
                         return Ok(String::new());
                     }
