@@ -287,14 +287,30 @@ async fn process_transform_subtitle(
 ) -> Result<serde_json::Value> {
     info!("Converting SRT to ASS for stream: {}", payload.stream_id);
     
-    let entries = parse_srt(&payload.subtitle_srt_file_name)
+    let temp_dir = std::env::var("TEMP_DIR").unwrap_or("/tmp".to_string());
+    let srt_file_path = format!("{}/{}", temp_dir, payload.subtitle_srt_file_name);
+    
+    let s3_srt_key = format!("{}/{}", payload.stream_id, payload.subtitle_srt_file_name);
+    s3_client
+        .download_file(&s3_srt_key, &srt_file_path)
+        .await
+        .context("Failed to download SRT file from S3")?;
+    
+    let srt_content = tokio::fs::read_to_string(&srt_file_path)
+        .await
+        .context("Failed to read SRT file")?;
+    
+    let entries = parse_srt(&srt_content)
         .context("Failed to parse SRT content")?;
     
     info!("Parsed {} subtitle entries", entries.len());
     
     let ass_content = create_ass_content(entries);
     
-    let temp_dir = std::env::var("TEMP_DIR").unwrap_or("/tmp".to_string());
+    if let Err(e) = tokio::fs::remove_file(&srt_file_path).await {
+        error!("Failed to remove temporary SRT file: {}", e);
+    }
+    
     let ass_file_name = format!("{}.ass", payload.stream_id);
     let temp_file_path = format!("{}/{}", temp_dir, ass_file_name);
     
