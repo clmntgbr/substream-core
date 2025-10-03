@@ -184,15 +184,24 @@ async fn process_get_video(
 
     let mut stdout_lines = stdout_reader.lines();
     let mut stderr_lines = stderr_reader.lines();
+    let mut last_progress = 0.0;
 
     loop {
         tokio::select! {
             line = stdout_lines.next_line() => {
                 match line {
                     Ok(Some(line)) => {
-                        if !line.trim().is_empty() && 
-                           !line.contains("[download]") && 
-                           !line.contains("%") &&
+                        if line.contains("[download]") && line.contains("%") {
+                            if let Some(percent_str) = line.split_whitespace()
+                                .find(|s| s.ends_with('%'))
+                                .and_then(|s| s.trim_end_matches('%').parse::<f64>().ok()) {
+                                if percent_str >= last_progress + 10.0 || percent_str >= 99.0 {
+                                    info!("Download progress: {:.1}%", percent_str);
+                                    last_progress = percent_str;
+                                }
+                            }
+                        } else if !line.trim().is_empty() && 
+                           !line.contains("[download]") &&
                            !line.contains("Deleting original file") {
                             info!("yt-dlp: {}", line);
                         }
@@ -252,15 +261,10 @@ async fn process_get_video(
 
     Ok(serde_json::json!({
         "file_name": file_name,
-        "original_file_name": metadata.get("title").and_then(|t| t.as_str()).unwrap_or("video"),
-        "title": metadata.get("title"),
-        "description": metadata.get("description"),
-        "duration": metadata.get("duration"),
-        "uploader": metadata.get("uploader"),
-        "upload_date": metadata.get("upload_date"),
-        "view_count": metadata.get("view_count"),
-        "like_count": metadata.get("like_count"),
-        "thumbnail": metadata.get("thumbnail"),
+        "original_file_name": format!(
+            "{}.mp4",
+            metadata.get("title").and_then(|t| t.as_str()).unwrap_or("video")
+        ),
         "mime_type": "video/mp4",
         "size": file_size,
         "stream_id": payload.stream_id,

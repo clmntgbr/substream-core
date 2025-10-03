@@ -499,13 +499,12 @@ impl S3Client {
         let mut part_number = 1i32;
         let mut completed_parts = Vec::new();
         let mut total_uploaded = 0u64;
+        let mut last_progress_report = 0;
     
         loop {
-            // CORRECTION: Allouer le buffer en dehors de la boucle de lecture
             let mut buffer = Vec::with_capacity(PART_SIZE);
             buffer.resize(PART_SIZE, 0u8);
             
-            // CORRECTION: Lire exactement PART_SIZE octets (ou ce qui reste)
             let mut total_read = 0;
             
             while total_read < PART_SIZE {
@@ -514,20 +513,31 @@ impl S3Client {
                     .context("Failed to read file chunk")?;
     
                 if bytes_read == 0 {
-                    break; // Fin du fichier
+                    break;
                 }
     
                 total_read += bytes_read;
             }
     
             if total_read == 0 {
-                break; // Plus rien à lire
+                break;
             }
     
-            // Tronquer le buffer à la taille réellement lue
             buffer.truncate(total_read);
     
             total_uploaded += total_read as u64;
+            let progress = ((total_uploaded as f64 / file_size as f64) * 100.0) as u32;
+            
+            if progress >= last_progress_report + 10 || total_uploaded == file_size {
+                info!(
+                    "Upload progress: {}% ({:.2} MB / {:.2} MB)",
+                    progress,
+                    total_uploaded as f64 / 1024.0 / 1024.0,
+                    file_size as f64 / 1024.0 / 1024.0
+                );
+                last_progress_report = progress;
+            }
+            
             let body = ByteStream::from(buffer);
     
             match self.client
