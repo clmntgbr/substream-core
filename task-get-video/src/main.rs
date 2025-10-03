@@ -195,7 +195,7 @@ async fn process_get_video(
                             if let Some(percent_str) = line.split_whitespace()
                                 .find(|s| s.ends_with('%'))
                                 .and_then(|s| s.trim_end_matches('%').parse::<f64>().ok()) {
-                                if percent_str >= last_progress + 10.0 || percent_str >= 99.0 {
+                                if percent_str >= last_progress + 20.0 || percent_str >= 99.0 {
                                     info!("Download progress: {:.1}%", percent_str);
                                     last_progress = percent_str;
                                 }
@@ -248,14 +248,15 @@ async fn process_get_video(
     let s3_key = format!("{}/{}", payload.stream_id, file_name);
     info!("Uploading to S3: {}", s3_key);
     
-    s3_client
+    let upload_result = s3_client
         .upload_file(&temp_file_path, &s3_key)
-        .await
-        .context("Failed to upload video to S3")?;
+        .await;
 
     if let Err(e) = tokio::fs::remove_file(&temp_file_path).await {
         error!("Failed to remove temporary file {}: {}", temp_file_path, e);
     }
+
+    upload_result.context("Failed to upload video to S3")?;
 
     info!("Video processed successfully: {}", file_name);
 

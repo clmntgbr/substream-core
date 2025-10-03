@@ -528,7 +528,7 @@ impl S3Client {
             total_uploaded += total_read as u64;
             let progress = ((total_uploaded as f64 / file_size as f64) * 100.0) as u32;
             
-            if progress >= last_progress_report + 10 || total_uploaded == file_size {
+            if progress >= last_progress_report + 20 || total_uploaded == file_size {
                 info!(
                     "Upload progress: {}% ({:.2} MB / {:.2} MB)",
                     progress,
