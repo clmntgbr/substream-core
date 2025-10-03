@@ -16,4 +16,6 @@ uuid = { workspace = true }
 anyhow = { workspace = true }
 dotenvy = { workspace = true }
 futures = { workspace = true }
+reqwest = { version = "0.12", features = ["json", "multipart"] }
+chrono = "0.4"
 

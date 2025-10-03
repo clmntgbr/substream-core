@@ -57,9 +57,6 @@ async fn main() -> Result<()> {
             Some(delivery) = consumer.next() => {
                 match delivery {
                     Ok(delivery) => {
-                        let data = String::from_utf8_lossy(&delivery.data);
-                        info!("Received message: {}", data);
-
                         match serde_json::from_slice::<TaskMessage<ExtractSoundPayload>>(&delivery.data) {
                             Ok(message) => {
                                 let webhook_client = Arc::clone(&webhook_client);
@@ -70,6 +67,7 @@ async fn main() -> Result<()> {
                                     let _permit = semaphore.acquire().await.unwrap();
                                     
                                     info!("Processing stream: {}", message.payload.stream_id);
+                                    info!("Task ID: {}", message.task_id);
 
                                     match process_extract_sound(&message.payload, &message.task_id, &s3_client).await {
                                         Ok(result) => {
@@ -138,16 +136,12 @@ async fn process_extract_sound(
     task_id: &uuid::Uuid,
     s3_client: &S3Client,
 ) -> Result<serde_json::Value> {
-    info!("Extracting sound from video: {}", payload.file_name);
-    info!("Task ID: {}", task_id);
-
     let temp_dir = "/tmp/audio";
     tokio::fs::create_dir_all(temp_dir).await?;
 
     let video_s3_key = format!("{}/{}", payload.stream_id, payload.file_name);
     let temp_video_path = format!("{}/{}", temp_dir, payload.file_name);
 
-    info!("Downloading video from S3: {}", video_s3_key);
     s3_client
         .download_file(&video_s3_key, &temp_video_path)
         .await
@@ -155,7 +149,6 @@ async fn process_extract_sound(
 
     let audio_output_pattern = format!("{}/{}_%03d.wav", temp_dir, payload.stream_id);
 
-    info!("Extracting audio and splitting into 5-minute segments");
     let output = Command::new("ffmpeg")
         .arg("-i")
         .arg(&temp_video_path)
@@ -200,7 +193,6 @@ async fn process_extract_sound(
         }
 
         let s3_key = format!("{}/{}", payload.stream_id, segment_file_name);
-        info!("Uploading audio segment: {}", segment_file_name);
 
         let upload_result = s3_client
             .upload_file(&segment_path, &s3_key)
@@ -215,8 +207,6 @@ async fn process_extract_sound(
         audio_files.push(segment_file_name);
         segment_index += 1;
     }
-
-    info!("Extracted and uploaded {} audio segments", audio_files.len());
 
     Ok(serde_json::json!({
         "stream_id": payload.stream_id,

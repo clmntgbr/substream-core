@@ -128,14 +128,7 @@ async fn process_transform_subtitle(
     payload: &TransformSubtitlePayload, 
     task_id: &uuid::Uuid,
 ) -> Result<serde_json::Value> {
-    info!("Received payload:");
-    info!("  Task ID: {}", task_id);
-    info!("  Stream ID: {}", payload.stream_id);
-    info!("  Subtitle SRT file: {}", payload.subtitle_srt_file);
-
     let subtitle_ass_file = payload.subtitle_srt_file.replace(".srt", ".ass");
-
-    info!("Transforming {} to {}", payload.subtitle_srt_file, subtitle_ass_file);
 
     Ok(serde_json::json!({
         "stream_id": payload.stream_id,

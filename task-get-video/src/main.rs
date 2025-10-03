@@ -68,6 +68,7 @@ async fn main() -> Result<()> {
                                     let _permit = semaphore.acquire().await.unwrap();
                                     
                                     info!("Processing stream: {}", message.payload.stream_id);
+                                    info!("Task ID: {}", message.task_id);
 
                                     match process_get_video(&message.payload, &message.task_id, &s3_client).await {
                                         Ok(result) => {
@@ -136,9 +137,6 @@ async fn process_get_video(
     task_id: &uuid::Uuid,
     s3_client: &S3Client,
 ) -> Result<serde_json::Value> {
-    info!("Downloading video from: {}", payload.url);
-    info!("Task ID: {}", task_id);
-
     let temp_dir = "/tmp/videos";
     tokio::fs::create_dir_all(temp_dir).await?;
     
@@ -159,8 +157,6 @@ async fn process_get_video(
 
     let metadata: serde_json::Value = serde_json::from_slice(&metadata_output.stdout)
         .context("Failed to parse yt-dlp metadata")?;
-
-    info!("Video metadata retrieved: {}", metadata.get("title").and_then(|t| t.as_str()).unwrap_or("Unknown"));
 
     let mut child = Command::new("yt-dlp")
         .arg("-f")
@@ -185,28 +181,12 @@ async fn process_get_video(
 
     let mut stdout_lines = stdout_reader.lines();
     let mut stderr_lines = stderr_reader.lines();
-    let mut last_progress = 0.0;
 
     loop {
         tokio::select! {
             line = stdout_lines.next_line() => {
                 match line {
-                    Ok(Some(line)) => {
-                        if line.contains("[download]") && line.contains("%") {
-                            if let Some(percent_str) = line.split_whitespace()
-                                .find(|s| s.ends_with('%'))
-                                .and_then(|s| s.trim_end_matches('%').parse::<f64>().ok()) {
-                                if percent_str >= last_progress + 20.0 || percent_str >= 99.0 {
-                                    info!("Download progress: {:.1}%", percent_str);
-                                    last_progress = percent_str;
-                                }
-                            }
-                        } else if !line.trim().is_empty() && 
-                           !line.contains("[download]") &&
-                           !line.contains("Deleting original file") {
-                            info!("yt-dlp: {}", line);
-                        }
-                    }
+                    Ok(Some(_line)) => {},
                     Ok(None) => break,
                     Err(e) => {
                         error!("Error reading stdout: {}", e);
@@ -218,7 +198,7 @@ async fn process_get_video(
                 match line {
                     Ok(Some(line)) => {
                         if !line.trim().is_empty() {
-                            error!("yt-dlp: {}", line);
+                            error!("yt-dlp error: {}", line);
                         }
                     }
                     Ok(None) => {},
@@ -244,10 +224,8 @@ async fn process_get_video(
         .context("Failed to read downloaded file metadata")?;
     
     let file_size = file_metadata.len();
-    info!("Video downloaded: {} bytes", file_size);
 
     let s3_key = format!("{}/{}", payload.stream_id, file_name);
-    info!("Uploading to S3: {}", s3_key);
     
     let upload_result = s3_client
         .upload_file(&temp_file_path, &s3_key)
@@ -258,8 +236,6 @@ async fn process_get_video(
     }
 
     upload_result.context("Failed to upload video to S3")?;
-
-    info!("Video processed successfully: {}", file_name);
 
     Ok(serde_json::json!({
         "file_name": file_name,
