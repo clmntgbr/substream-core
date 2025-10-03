@@ -35,6 +35,13 @@ pub struct ExtractSoundPayload {
     pub stream_id: String,
 }
 
+/// Payload for generate_subtitle task
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerateSubtitlePayload {
+    pub stream_id: String,
+    pub audio_files: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebhookResponse {
     pub task_id: Uuid,
