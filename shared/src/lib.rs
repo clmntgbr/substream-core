@@ -443,29 +443,163 @@ impl S3Client {
 
     /// Upload a file to S3
     pub async fn upload_file(&self, file_path: &str, object_name: &str) -> Result<()> {
-        info!("Uploading S3 file: {}", file_path);
-
-        let body = ByteStream::from_path(Path::new(file_path))
+        use tokio::io::AsyncReadExt;
+    
+        let file_size = tokio::fs::metadata(file_path)
             .await
-            .context("Failed to read file for upload")?;
-
-        match self.client
-            .put_object()
+            .context("Failed to get file metadata")?
+            .len();
+    
+        info!("Uploading S3 file: {} ({} bytes)", file_path, file_size);
+    
+        const PART_SIZE: usize = 10 * 1024 * 1024; // 10 MB
+        
+        if file_size <= PART_SIZE as u64 {
+            let body = ByteStream::from_path(Path::new(file_path))
+                .await
+                .context("Failed to read file for upload")?;
+    
+            self.client
+                .put_object()
+                .bucket(&self.bucket_name)
+                .key(object_name)
+                .body(body)
+                .send()
+                .await
+                .context("Failed to upload file")?;
+    
+            info!("Successfully uploaded file {} to S3", file_path);
+            return Ok(());
+        }
+    
+        // Multipart upload pour les gros fichiers
+        info!(
+            "Using multipart upload (file size: {:.2} MB, part size: {} MB)",
+            file_size as f64 / 1024.0 / 1024.0,
+            PART_SIZE / 1024 / 1024
+        );
+    
+        let multipart_upload = self.client
+            .create_multipart_upload()
             .bucket(&self.bucket_name)
             .key(object_name)
-            .body(body)
             .send()
             .await
-        {
-            Ok(_) => {
-                info!("Successfully uploaded file {} to S3", file_path);
-                Ok(())
+            .context("Failed to create multipart upload")?;
+    
+        let upload_id = multipart_upload
+            .upload_id()
+            .context("No upload ID")?
+            .to_string();
+    
+        let mut file = tokio::fs::File::open(file_path)
+            .await
+            .context("Failed to open file")?;
+    
+        let mut part_number = 1i32;
+        let mut completed_parts = Vec::new();
+        let mut total_uploaded = 0u64;
+    
+        loop {
+            // CORRECTION: Allouer le buffer en dehors de la boucle de lecture
+            let mut buffer = Vec::with_capacity(PART_SIZE);
+            buffer.resize(PART_SIZE, 0u8);
+            
+            // CORRECTION: Lire exactement PART_SIZE octets (ou ce qui reste)
+            let mut total_read = 0;
+            
+            while total_read < PART_SIZE {
+                let bytes_read = file.read(&mut buffer[total_read..])
+                    .await
+                    .context("Failed to read file chunk")?;
+    
+                if bytes_read == 0 {
+                    break; // Fin du fichier
+                }
+    
+                total_read += bytes_read;
             }
-            Err(e) => {
-                error!("Error uploading S3 file {} ({:?})", file_path, e);
-                Err(anyhow::anyhow!("Failed to upload file: {:?}", e))
+    
+            if total_read == 0 {
+                break; // Plus rien à lire
+            }
+    
+            // Tronquer le buffer à la taille réellement lue
+            buffer.truncate(total_read);
+    
+            total_uploaded += total_read as u64;
+            let body = ByteStream::from(buffer);
+    
+            match self.client
+                .upload_part()
+                .bucket(&self.bucket_name)
+                .key(object_name)
+                .upload_id(&upload_id)
+                .part_number(part_number)
+                .body(body)
+                .send()
+                .await
+            {
+                Ok(output) => {
+                    let e_tag = output.e_tag()
+                        .context(format!("No ETag for part {}", part_number))?
+                        .to_string();
+    
+                    completed_parts.push(
+                        aws_sdk_s3::types::CompletedPart::builder()
+                            .part_number(part_number)
+                            .e_tag(e_tag)
+                            .build()
+                    );
+                    
+                    part_number += 1;
+                }
+                Err(e) => {
+                    error!("Failed to upload part {}: {:?}", part_number, e);
+                    
+                    // Annuler l'upload multipart en cas d'erreur
+                    if let Err(abort_err) = self.client
+                        .abort_multipart_upload()
+                        .bucket(&self.bucket_name)
+                        .key(object_name)
+                        .upload_id(&upload_id)
+                        .send()
+                        .await
+                    {
+                        error!("Failed to abort multipart upload: {:?}", abort_err);
+                    }
+                    
+                    return Err(anyhow::anyhow!("Failed to upload part {}: {:?}", part_number, e));
+                }
             }
         }
+    
+        if completed_parts.is_empty() {
+            return Err(anyhow::anyhow!("No parts were uploaded"));
+        }
+    
+        let completed = aws_sdk_s3::types::CompletedMultipartUpload::builder()
+            .set_parts(Some(completed_parts))
+            .build();
+    
+        self.client
+            .complete_multipart_upload()
+            .bucket(&self.bucket_name)
+            .key(object_name)
+            .upload_id(&upload_id)
+            .multipart_upload(completed)
+            .send()
+            .await
+            .context("Failed to complete multipart upload")?;
+    
+        info!(
+            "Successfully uploaded file {} to S3 (multipart, {} parts, {:.2} MB total)",
+            file_path,
+            part_number - 1,
+            total_uploaded as f64 / 1024.0 / 1024.0
+        );
+        
+        Ok(())
     }
 
     /// Download a file from S3

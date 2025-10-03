@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{error, info};
 use tokio::process::Command;
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 const TASK_TYPE: &str = "get_video";
 
@@ -66,11 +67,11 @@ async fn main() -> Result<()> {
                                 tokio::spawn(async move {
                                     let _permit = semaphore.acquire().await.unwrap();
                                     
-                                    info!("Processing task: {}", message.task_id);
+                                    info!("Processing stream: {}", message.payload.stream_id);
 
                                     match process_get_video(&message.payload, &message.task_id, &s3_client).await {
                                         Ok(result) => {
-                                            info!("Task {} completed successfully", message.task_id);
+                                            info!("Stream {} completed successfully", message.payload.stream_id);
 
                                             if let Err(e) = webhook_client
                                                 .send_success(
@@ -85,7 +86,7 @@ async fn main() -> Result<()> {
                                             }
                                         }
                                         Err(e) => {
-                                            error!("Task {} failed: {}", message.task_id, e);
+                                            error!("Stream {} failed: {}", message.payload.stream_id, e);
 
                                             if let Err(webhook_err) = webhook_client
                                                 .send_error_with_stream(
@@ -160,22 +161,69 @@ async fn process_get_video(
 
     info!("Video metadata retrieved: {}", metadata.get("title").and_then(|t| t.as_str()).unwrap_or("Unknown"));
 
-    let download_output = Command::new("yt-dlp")
+    let mut child = Command::new("yt-dlp")
         .arg("-f")
-        .arg("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best")
+        .arg("bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]")
         .arg("--no-playlist")
         .arg("--merge-output-format")
         .arg("mp4")
+        .arg("--newline")
         .arg("-o")
         .arg(&output_template)
         .arg(&payload.url)
-        .output()
-        .await
-        .context("Failed to execute yt-dlp for download")?;
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("Failed to spawn yt-dlp for download")?;
 
-    if !download_output.status.success() {
-        let error = String::from_utf8_lossy(&download_output.stderr);
-        return Err(anyhow::anyhow!("Failed to download video: {}", error));
+    let stdout = child.stdout.take().context("Failed to capture stdout")?;
+    let stderr = child.stderr.take().context("Failed to capture stderr")?;
+
+    let stdout_reader = BufReader::new(stdout);
+    let stderr_reader = BufReader::new(stderr);
+
+    let mut stdout_lines = stdout_reader.lines();
+    let mut stderr_lines = stderr_reader.lines();
+
+    loop {
+        tokio::select! {
+            line = stdout_lines.next_line() => {
+                match line {
+                    Ok(Some(line)) => {
+                        if !line.trim().is_empty() && 
+                           !line.contains("[download]") && 
+                           !line.contains("%") &&
+                           !line.contains("Deleting original file") {
+                            info!("yt-dlp: {}", line);
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        error!("Error reading stdout: {}", e);
+                        break;
+                    }
+                }
+            }
+            line = stderr_lines.next_line() => {
+                match line {
+                    Ok(Some(line)) => {
+                        if !line.trim().is_empty() {
+                            error!("yt-dlp: {}", line);
+                        }
+                    }
+                    Ok(None) => {},
+                    Err(e) => {
+                        error!("Error reading stderr: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    let status = child.wait().await.context("Failed to wait for yt-dlp process")?;
+
+    if !status.success() {
+        return Err(anyhow::anyhow!("yt-dlp process failed with status: {}", status));
     }
 
     let file_name = format!("{}.mp4", task_id);
