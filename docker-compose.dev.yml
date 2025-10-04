@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   task-get-video:
@@ -11,7 +11,7 @@ services:
       - .:/app
       - cargo-cache:/usr/local/cargo/registry
       - target-cache:/app/target
-    container_name: substream-task-get-video-dev
+    container_name: ${PROJECT_NAME}-task-get-video-dev
     env_file:
       - .env
     restart: unless-stopped
@@ -28,7 +28,7 @@ services:
       - .:/app
       - cargo-cache:/usr/local/cargo/registry
       - target-cache:/app/target
-    container_name: substream-task-extract-sound-dev
+    container_name: ${PROJECT_NAME}-task-extract-sound-dev
     env_file:
       - .env
     restart: unless-stopped
@@ -45,7 +45,7 @@ services:
       - .:/app
       - cargo-cache:/usr/local/cargo/registry
       - target-cache:/app/target
-    container_name: substream-task-generate-subtitle-dev
+    container_name: ${PROJECT_NAME}-task-generate-subtitle-dev
     env_file:
       - .env
     restart: unless-stopped
@@ -62,7 +62,7 @@ services:
       - .:/app
       - cargo-cache:/usr/local/cargo/registry
       - target-cache:/app/target
-    container_name: substream-task-transform-subtitle-dev
+    container_name: ${PROJECT_NAME}-task-transform-subtitle-dev
     env_file:
       - .env
     restart: unless-stopped
@@ -76,4 +76,3 @@ volumes:
 networks:
   substream-network:
     external: true
-
