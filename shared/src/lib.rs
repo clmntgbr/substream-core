@@ -49,6 +49,14 @@ pub struct TransformSubtitlePayload {
     pub subtitle_srt_file_name: String,
 }
 
+/// Payload for resize_video task
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResizeVideoPayload {
+    pub stream_id: String,
+    pub file_name: String,
+    pub format: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebhookResponse {
     pub task_id: Uuid,

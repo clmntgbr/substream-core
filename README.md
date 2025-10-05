@@ -70,6 +70,7 @@ Video URL → Get Video → Extract Sound → Generate Subtitle → Transform Su
 | `task-extract-sound` | `core.extract_sound` | Extracts audio from video files | ~3s (simulated) |
 | `task-generate-subtitle` | `core.generate_subtitle` | Generates subtitles using AssemblyAI | Variable |
 | `task-transform-subtitle` | `core.transform_subtitle` | Transforms subtitle formats | ~1s (simulated) |
+| `task-resize-video` | `core.resize_video` | Resizes videos to specified format | Variable |
 
 ## 📨 Message Format
 
@@ -120,6 +121,15 @@ All tasks use a consistent message structure:
 }
 ```
 
+#### Resize Video Task
+```json
+{
+  "stream_id": "unique-stream-identifier",
+  "file_name": "video.mp4",
+  "format": "720p"
+}
+```
+
 ## 🔧 Configuration
 
 ### Environment Variables
@@ -157,6 +167,7 @@ make dev              # Run services locally (no Docker)
 make dev-docker       # Run with Docker + hot reload
 make dev-video        # Run only video task service
 make dev-sound        # Run only sound extraction service
+make dev-resize       # Run only video resize service
 
 # Production
 make prod             # Build and run with Docker
@@ -168,6 +179,7 @@ make down             # Stop Docker services
 make logs             # View all service logs
 make logs-video       # View video service logs
 make logs-sound       # View sound service logs
+make logs-resize      # View resize service logs
 make clean            # Clean build artifacts
 make test             # Run tests
 make check            # Check code without building
@@ -186,6 +198,7 @@ substream-core/
 ├── task-extract-sound/       # Audio extraction service
 ├── task-generate-subtitle/   # Subtitle generation service
 ├── task-transform-subtitle/  # Subtitle transformation service
+├── task-resize-video/        # Video resize service
 ├── docker-compose.yml        # Production Docker setup
 ├── docker-compose.dev.yml    # Development Docker setup
 └── Makefile                  # Development commands

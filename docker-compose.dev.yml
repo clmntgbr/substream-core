@@ -69,6 +69,23 @@ services:
     networks:
       - substream-network
 
+  task-resize-video:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        PACKAGE_NAME: task-resize-video
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/app/target
+    container_name: ${PROJECT_NAME}-task-resize-video-dev
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - substream-network
+
 volumes:
   cargo-cache:
   target-cache:
