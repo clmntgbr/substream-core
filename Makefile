@@ -31,6 +31,9 @@ dev-sound:
 dev-resize:
 	cargo run --package task-resize-video
 
+dev-embed:
+	cargo run --package task-embed-video
+
 # Development with Docker (hot reload)
 dev-docker:
 	@cp -n .env.example .env 2>/dev/null || true
@@ -69,6 +72,9 @@ logs-sound:
 
 logs-resize:
 	docker-compose logs -f task-resize-video
+
+logs-embed:
+	docker-compose logs -f task-embed-video
 
 # Utilities
 clean:

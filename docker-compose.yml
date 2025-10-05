@@ -91,6 +91,24 @@ services:
     networks:
       - substream-network
 
+  task-embed-video:
+    container_name: ${PROJECT_NAME}-task-embed-video
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: /app/task-embed-video
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "task-embed-video"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - substream-network
+
 networks:
   substream-network:
     external: true

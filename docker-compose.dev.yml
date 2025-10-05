@@ -86,6 +86,23 @@ services:
     networks:
       - substream-network
 
+  task-embed-video:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        PACKAGE_NAME: task-embed-video
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/app/target
+    container_name: ${PROJECT_NAME}-task-embed-video-dev
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - substream-network
+
 volumes:
   cargo-cache:
   target-cache:

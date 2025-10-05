@@ -6,6 +6,7 @@ members = [
     "task-generate-subtitle",
     "task-transform-subtitle",
     "task-resize-video",
+    "task-embed-video",
 ]
 resolver = "2"
 
