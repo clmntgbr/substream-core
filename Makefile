@@ -34,6 +34,9 @@ dev-resize:
 dev-embed:
 	cargo run --package task-embed-video
 
+dev-chunk:
+	cargo run --package task-chunk-video
+
 # Development with Docker (hot reload)
 dev-docker:
 	@cp -n .env.example .env 2>/dev/null || true
@@ -75,6 +78,9 @@ logs-resize:
 
 logs-embed:
 	docker-compose logs -f task-embed-video
+
+logs-chunk:
+	docker-compose logs -f task-chunk-video
 
 # Utilities
 clean:

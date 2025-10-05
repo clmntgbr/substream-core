@@ -72,6 +72,7 @@ Video URL → Get Video → Extract Sound → Generate Subtitle → Transform Su
 | `task-transform-subtitle` | `core.transform_subtitle` | Transforms subtitle formats | ~1s (simulated) |
 | `task-resize-video` | `core.resize_video` | Resizes videos to specified format | Variable |
 | `task-embed-video` | `core.embed_video` | Embeds subtitles into video files | Variable |
+| `task-chunk-video` | `core.chunk_video` | Splits videos into smaller chunks | Variable |
 
 ## 📨 Message Format
 
@@ -140,6 +141,15 @@ All tasks use a consistent message structure:
 }
 ```
 
+#### Chunk Video Task
+```json
+{
+  "stream_id": "unique-stream-identifier",
+  "embed_file_name": "embedded_video.mp4",
+  "chunk_number": 5
+}
+```
+
 ## 🔧 Configuration
 
 ### Environment Variables
@@ -179,6 +189,7 @@ make dev-video        # Run only video task service
 make dev-sound        # Run only sound extraction service
 make dev-resize       # Run only video resize service
 make dev-embed        # Run only embed video service
+make dev-chunk        # Run only chunk video service
 
 # Production
 make prod             # Build and run with Docker
@@ -192,6 +203,7 @@ make logs-video       # View video service logs
 make logs-sound       # View sound service logs
 make logs-resize      # View resize service logs
 make logs-embed       # View embed video service logs
+make logs-chunk       # View chunk video service logs
 make clean            # Clean build artifacts
 make test             # Run tests
 make check            # Check code without building
@@ -212,6 +224,7 @@ substream-core/
 ├── task-transform-subtitle/  # Subtitle transformation service
 ├── task-resize-video/        # Video resize service
 ├── task-embed-video/         # Video embedding service
+├── task-chunk-video/         # Video chunking service
 ├── docker-compose.yml        # Production Docker setup
 ├── docker-compose.dev.yml    # Development Docker setup
 └── Makefile                  # Development commands
