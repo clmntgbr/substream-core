@@ -141,7 +141,7 @@ async fn main() -> Result<()> {
 
 async fn process_generate_subtitle(
     payload: &GenerateSubtitlePayload, 
-    task_id: &uuid::Uuid,
+    _task_id: &uuid::Uuid,
 ) -> Result<serde_json::Value> {
 
     let assemblyai_api_key = std::env::var("ASSEMBLYAI_API_KEY")

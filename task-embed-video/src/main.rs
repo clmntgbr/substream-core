@@ -203,13 +203,27 @@ async fn embed_subtitle_with_ffmpeg(
         output_video_path.display()
     );
     
+    let probe = Command::new("ffprobe")
+        .arg("-v").arg("error")
+        .arg("-select_streams").arg("v:0")
+        .arg("-show_entries").arg("stream=bit_rate")
+        .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
+        .arg(&input_video_path)
+        .output()
+        .await?;
+
+    let bitrate = String::from_utf8_lossy(&probe.stdout).trim().parse::<u64>()?;
+    let target_bitrate = format!("{}k", bitrate / 1000);
+
     let output = Command::new("ffmpeg")
         .arg("-i").arg(&input_video_path)
         .arg("-vf").arg(format!("ass={}", subtitle_file_path.display()))
         .arg("-c:v").arg("libx264")
-        .arg("-preset").arg("ultrafast")    // 👈 10x plus rapide !
-        .arg("-crf").arg("28")
-        .arg("-threads").arg("0")           // Tous les CPU
+        .arg("-b:v").arg(&target_bitrate)
+        .arg("-maxrate").arg(&target_bitrate)
+        .arg("-bufsize").arg(format!("{}k", bitrate / 500))
+        .arg("-preset").arg("superfast")    // 👈 5-8x plus rapide
+        .arg("-threads").arg("0")
         .arg("-c:a").arg("copy")
         .arg("-movflags").arg("+faststart")
         .arg("-y")
