@@ -9,10 +9,19 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 const TASK_TYPE: &str = "generate_subtitle";
+const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
 const MAX_PARALLEL_FILES: usize = 4;
 const ASSEMBLYAI_UPLOAD_URL: &str = "https://api.assemblyai.com/v2/upload";
 const ASSEMBLYAI_TRANSCRIPT_URL: &str = "https://api.assemblyai.com/v2/transcript";
 const ASSEMBLYAI_SRT_CHARS_PER_CAPTION: u32 = 32;
+const POLL_INTERVAL_SECONDS: u64 = 3;
+const CHUNK_DURATION_MS: i64 = 300_000;
+const MIN_SRT_BLOCK_LINES: usize = 3;
+const TIMESTAMP_PARTS_COUNT: usize = 2;
+const TIME_PARTS_COUNT: usize = 3;
+const MS_PER_HOUR: i64 = 3600000;
+const MS_PER_MINUTE: i64 = 60000;
+const MS_PER_SECOND: i64 = 1000;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -36,9 +45,9 @@ async fn main() -> Result<()> {
     let queue_name = std::env::var("QUEUE_GENERATE_SUBTITLE").unwrap_or("core.generate_subtitle".to_string());
     
     let max_concurrent = std::env::var("MAX_CONCURRENT_TASKS")
-        .unwrap_or("10".to_string())
+        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS.to_string())
         .parse()
-        .unwrap_or(10);
+        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS);
 
     info!("Listening on queue: {} (max concurrent: {})", queue_name, max_concurrent);
 
@@ -134,8 +143,6 @@ async fn process_generate_subtitle(
     payload: &GenerateSubtitlePayload, 
     task_id: &uuid::Uuid,
 ) -> Result<serde_json::Value> {
-    info!("Task {}: Processing stream {} with {} audio files", 
-        task_id, payload.stream_id, payload.audio_files.len());
 
     let assemblyai_api_key = std::env::var("ASSEMBLYAI_API_KEY")
         .context("ASSEMBLYAI_API_KEY environment variable not set")?;
@@ -143,9 +150,25 @@ async fn process_generate_subtitle(
     let s3_client = Arc::new(S3Client::from_env().await
         .context("Failed to create S3 client")?);
 
-    let temp_dir = std::env::temp_dir().join(format!("subtitle_{}", task_id));
+    let temp_dir = std::env::temp_dir().join(&payload.stream_id);
     tokio::fs::create_dir_all(&temp_dir).await
         .context("Failed to create temporary directory")?;
+    
+    let result = process_generate_subtitle_inner(payload, &s3_client, &temp_dir, assemblyai_api_key).await;
+    
+    if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
+        error!("Failed to clean up temporary directory for stream {}: {}", payload.stream_id, e);
+    }
+    
+    result
+}
+
+async fn process_generate_subtitle_inner(
+    payload: &GenerateSubtitlePayload,
+    s3_client: &Arc<S3Client>,
+    temp_dir: &std::path::PathBuf,
+    assemblyai_api_key: String,
+) -> Result<serde_json::Value> {
 
     let semaphore = Arc::new(Semaphore::new(MAX_PARALLEL_FILES));
     let mut tasks = Vec::new();
@@ -184,12 +207,10 @@ async fn process_generate_subtitle(
             }
             Ok(Err(e)) => {
                 error!("Failed to process file {}: {}", index, e);
-                let _ = tokio::fs::remove_dir_all(&temp_dir).await;
                 return Err(e);
             }
             Err(e) => {
                 error!("Task {} panicked: {}", index, e);
-                let _ = tokio::fs::remove_dir_all(&temp_dir).await;
                 return Err(anyhow::anyhow!("Task {} panicked: {}", index, e));
             }
         }
@@ -213,8 +234,6 @@ async fn process_generate_subtitle(
     ).await
         .context("Failed to upload SRT to S3")?;
 
-    tokio::fs::remove_dir_all(&temp_dir).await
-        .context("Failed to clean up temporary directory")?;
 
     Ok(serde_json::json!({
         "stream_id": payload.stream_id,
@@ -346,7 +365,7 @@ async fn poll_transcription(api_key: &str, transcript_id: &str) -> Result<String
     let status_url = format!("{}/{}", ASSEMBLYAI_TRANSCRIPT_URL, transcript_id);
 
     loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(POLL_INTERVAL_SECONDS)).await;
 
         let response = client
             .get(&status_url)
@@ -419,7 +438,7 @@ fn parse_srt(srt_content: &str) -> Result<Vec<SubtitleEntry>> {
 
     for block in blocks {
         let lines: Vec<&str> = block.lines().collect();
-        if lines.len() < 3 {
+        if lines.len() < MIN_SRT_BLOCK_LINES {
             continue;
         }
 
@@ -445,7 +464,7 @@ fn parse_srt(srt_content: &str) -> Result<Vec<SubtitleEntry>> {
 
 fn parse_timestamp_line(line: &str) -> Result<(i64, i64)> {
     let parts: Vec<&str> = line.split(" --> ").collect();
-    if parts.len() != 2 {
+    if parts.len() != TIMESTAMP_PARTS_COUNT {
         return Err(anyhow::anyhow!("Invalid timestamp line: {}", line));
     }
 
@@ -457,12 +476,12 @@ fn parse_timestamp_line(line: &str) -> Result<(i64, i64)> {
 
 fn parse_timestamp(ts: &str) -> Result<i64> {
     let parts: Vec<&str> = ts.split(',').collect();
-    if parts.len() != 2 {
+    if parts.len() != TIMESTAMP_PARTS_COUNT {
         return Err(anyhow::anyhow!("Invalid timestamp: {}", ts));
     }
 
     let time_parts: Vec<&str> = parts[0].split(':').collect();
-    if time_parts.len() != 3 {
+    if time_parts.len() != TIME_PARTS_COUNT {
         return Err(anyhow::anyhow!("Invalid time format: {}", parts[0]));
     }
 
@@ -475,22 +494,21 @@ fn parse_timestamp(ts: &str) -> Result<i64> {
     let milliseconds: i64 = parts[1].parse()
         .context("Failed to parse milliseconds")?;
 
-    let total_ms = (hours * 3600 + minutes * 60 + seconds) * 1000 + milliseconds;
+    let total_ms = (hours * 3600 + minutes * 60 + seconds) * MS_PER_SECOND + milliseconds;
     Ok(total_ms)
 }
 
 fn format_timestamp(ms: i64) -> String {
-    let hours = ms / 3600000;
-    let minutes = (ms % 3600000) / 60000;
-    let seconds = (ms % 60000) / 1000;
-    let milliseconds = ms % 1000;
+    let hours = ms / MS_PER_HOUR;
+    let minutes = (ms % MS_PER_HOUR) / MS_PER_MINUTE;
+    let seconds = (ms % MS_PER_MINUTE) / MS_PER_SECOND;
+    let milliseconds = ms % MS_PER_SECOND;
 
     format!("{:02}:{:02}:{:02},{:03}", hours, minutes, seconds, milliseconds)
 }
 
 fn merge_subtitles(parts: Vec<Vec<SubtitleEntry>>) -> Result<String> {
     let mut all_entries = Vec::new();
-    const CHUNK_DURATION_MS: i64 = 300_000;
 
     for (part_index, part) in parts.into_iter().enumerate() {
         let time_offset = (part_index as i64) * CHUNK_DURATION_MS;

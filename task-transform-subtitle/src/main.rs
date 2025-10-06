@@ -7,26 +7,26 @@ use tokio::sync::Semaphore;
 use tracing::{error, info};
 
 const TASK_TYPE: &str = "transform_subtitle";
+const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
+const MIN_SRT_BLOCK_LINES: usize = 3;
+const TIMESTAMP_PARTS_COUNT: usize = 2;
+const HEX_COLOR_LENGTH: usize = 6;
+const SUBTITLE_FONT: &str = "Arial";
+const SUBTITLE_SIZE: &str = "20";
+const SUBTITLE_COLOR: &str = "#FFFFFF";
+const SUBTITLE_OUTLINE_COLOR: &str = "#000000";
+const SUBTITLE_BOLD: &str = "0";
+const SUBTITLE_ITALIC: &str = "0";
+const SUBTITLE_UNDERLINE: &str = "0";
+const SUBTITLE_OUTLINE_THICKNESS: &str = "2";
+const SUBTITLE_SHADOW: &str = "SIMPLE";
+const Y_AXIS_ALIGNMENT: &str = "10";
+const SCRIPT_TYPE: &str = "v4.00+";
+const PLAY_RES_X: u32 = 384;
+const PLAY_RES_Y: u32 = 288;
+const MARGIN_L: u32 = 10;
+const MARGIN_R: u32 = 10;
 
-struct CleanupGuard<F: FnOnce()> {
-    cleanup_fn: Option<F>,
-}
-
-impl<F: FnOnce()> CleanupGuard<F> {
-    fn new(cleanup_fn: F) -> Self {
-        Self {
-            cleanup_fn: Some(cleanup_fn),
-        }
-    }
-}
-
-impl<F: FnOnce()> Drop for CleanupGuard<F> {
-    fn drop(&mut self) {
-        if let Some(cleanup_fn) = self.cleanup_fn.take() {
-            cleanup_fn();
-        }
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -51,9 +51,9 @@ async fn main() -> Result<()> {
     let queue_name = std::env::var("QUEUE_TRANSFORM_SUBTITLE").unwrap_or("core.transform_subtitle".to_string());
     
     let max_concurrent = std::env::var("MAX_CONCURRENT_TASKS")
-        .unwrap_or("10".to_string())
+        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS.to_string())
         .parse()
-        .unwrap_or(10);
+        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS);
 
     info!("Listening on queue: {} (max concurrent: {})", queue_name, max_concurrent);
 
@@ -164,13 +164,13 @@ fn parse_srt(srt_content: &str) -> Result<Vec<SubtitleEntry>> {
         }
         
         let lines: Vec<&str> = block.lines().collect();
-        if lines.len() < 3 {
+        if lines.len() < MIN_SRT_BLOCK_LINES {
             continue;
         }
         
         let time_line = lines[1];
         let parts: Vec<&str> = time_line.split(" --> ").collect();
-        if parts.len() != 2 {
+        if parts.len() != TIMESTAMP_PARTS_COUNT {
             continue;
         }
         
@@ -193,7 +193,7 @@ fn convert_srt_time_to_ass(srt_time: &str) -> String {
     let time = srt_time.replace(",", ".");
     
     let parts: Vec<&str> = time.split('.').collect();
-    if parts.len() == 2 {
+    if parts.len() == TIMESTAMP_PARTS_COUNT {
         let time_part = parts[0];
         let ms_part = parts[1];
         
@@ -219,7 +219,7 @@ fn convert_srt_time_to_ass(srt_time: &str) -> String {
 
 fn convert_color(hex_color: &str) -> String {
     let hex = hex_color.trim_start_matches('#');
-    if hex.len() == 6 {
+    if hex.len() == HEX_COLOR_LENGTH {
         let r = &hex[0..2];
         let g = &hex[2..4];
         let b = &hex[4..6];
@@ -230,31 +230,34 @@ fn convert_color(hex_color: &str) -> String {
 }
 
 fn create_ass_content(entries: Vec<SubtitleEntry>) -> String {
-    let subtitle_font = "Arial";
-    let subtitle_size = "20";
-    let subtitle_color = "#FFFFFF";
-    let subtitle_outline_color = "#000000";
-    let subtitle_bold = "0";
-    let subtitle_italic = "0";
-    let subtitle_underline = "0";
-    let subtitle_outline_thickness = "2";
-    let subtitle_shadow = "SIMPLE";
-    let y_axis_alignment = "10";
+    let subtitle_font = SUBTITLE_FONT;
+    let subtitle_size = SUBTITLE_SIZE;
+    let subtitle_color = SUBTITLE_COLOR;
+    let subtitle_outline_color = SUBTITLE_OUTLINE_COLOR;
+    let subtitle_bold = SUBTITLE_BOLD;
+    let subtitle_italic = SUBTITLE_ITALIC;
+    let subtitle_underline = SUBTITLE_UNDERLINE;
+    let subtitle_outline_thickness = SUBTITLE_OUTLINE_THICKNESS;
+    let subtitle_shadow = SUBTITLE_SHADOW;
+    let y_axis_alignment = Y_AXIS_ALIGNMENT;
     
     let mut ass_content = format!(
 r#"[Script Info]
-ScriptType: v4.00+
-PlayResX: 384
-PlayResY: 288
+ScriptType: {}
+PlayResX: {}
+PlayResY: {}
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name,Fontname, Fontsize,PrimaryColour, SecondaryColour,OutlineColour, BackColour, Bold, Italic, Underline,StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default, {},{}, {}, {}, {},&H00000000, {}, {},{}, 0, 100, 100, 0, 0,1, {}, {},2,10,10,{},0
+Style: Default, {},{}, {}, {}, {},&H00000000, {}, {},{}, 0, 100, 100, 0, 0,1, {}, {},2,{},{},{},0
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 "#,
+        SCRIPT_TYPE,
+        PLAY_RES_X,
+        PLAY_RES_Y,
         subtitle_font,
         subtitle_size,
         convert_color(subtitle_color),
@@ -265,7 +268,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         subtitle_underline,
         subtitle_outline_thickness,
         if subtitle_shadow != "NONE" { "1" } else { "0" },
-        y_axis_alignment
+        y_axis_alignment,
+        MARGIN_L,
+        MARGIN_R
     );
     
     for entry in entries {
@@ -285,14 +290,32 @@ async fn process_transform_subtitle(
     _task_id: &uuid::Uuid,
     s3_client: &S3Client,
 ) -> Result<serde_json::Value> {
-    info!("Converting SRT to ASS for stream: {}", payload.stream_id);
     
-    let temp_dir = std::env::var("TEMP_DIR").unwrap_or("/tmp".to_string());
-    let srt_file_path = format!("{}/{}", temp_dir, payload.subtitle_srt_file_name);
+    let temp_dir = std::env::temp_dir().join(&payload.stream_id);
+    tokio::fs::create_dir_all(&temp_dir)
+        .await
+        .context("Failed to create temporary directory")?;
+    
+    let result = process_transform_subtitle_inner(payload, s3_client, &temp_dir).await;
+    
+    if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
+        error!("Failed to clean up temporary directory for stream {}: {}", payload.stream_id, e);
+    }
+    
+    result
+}
+
+async fn process_transform_subtitle_inner(
+    payload: &TransformSubtitlePayload, 
+    s3_client: &S3Client,
+    temp_dir: &std::path::PathBuf,
+) -> Result<serde_json::Value> {
+    
+    let srt_file_path = temp_dir.join(&payload.subtitle_srt_file_name);
     
     let s3_srt_key = format!("{}/subtitles/{}", payload.stream_id, payload.subtitle_srt_file_name);
     s3_client
-        .download_file(&s3_srt_key, &srt_file_path)
+        .download_file(&s3_srt_key, &srt_file_path.to_string_lossy())
         .await
         .context("Failed to download SRT file from S3")?;
     
@@ -303,7 +326,6 @@ async fn process_transform_subtitle(
     let entries = parse_srt(&srt_content)
         .context("Failed to parse SRT content")?;
     
-    info!("Parsed {} subtitle entries", entries.len());
     
     let ass_content = create_ass_content(entries);
     
@@ -312,37 +334,19 @@ async fn process_transform_subtitle(
     }
     
     let ass_file_name = format!("{}.ass", payload.stream_id);
-    let temp_file_path = format!("{}/{}", temp_dir, ass_file_name);
-    
-    let temp_file_path_cleanup = temp_file_path.clone();
-    let _cleanup_guard = CleanupGuard::new(move || {
-        let temp_file_path = temp_file_path_cleanup.clone();
-        tokio::spawn(async move {
-            if tokio::fs::try_exists(&temp_file_path).await.unwrap_or(false) {
-                if let Err(e) = tokio::fs::remove_file(&temp_file_path).await {
-                    error!("Failed to remove temporary ASS file during cleanup: {}", e);
-                }
-            }
-        });
-    });
+    let temp_file_path = temp_dir.join(&ass_file_name);
     
     tokio::fs::write(&temp_file_path, &ass_content)
         .await
         .context("Failed to write ASS file")?;
     
-    info!("Created temporary ASS file: {}", temp_file_path);
     
     let s3_key = format!("{}/subtitles/{}", payload.stream_id, ass_file_name);
     s3_client
-        .upload_file(&temp_file_path, &s3_key)
+        .upload_file(&temp_file_path.to_string_lossy(), &s3_key)
         .await
         .context("Failed to upload ASS file to S3")?;
     
-    if let Err(e) = tokio::fs::remove_file(&temp_file_path).await {
-        error!("Failed to remove temporary ASS file: {}", e);
-    }
-    
-    info!("Successfully uploaded ASS file to S3: {}", s3_key);
     
     Ok(serde_json::json!({
         "stream_id": payload.stream_id,

@@ -7,6 +7,7 @@ use tokio::sync::Semaphore;
 use tracing::{error, info};
 
 const TASK_TYPE: &str = "resize_video";
+const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -35,9 +36,9 @@ async fn main() -> Result<()> {
     let queue_name = std::env::var("QUEUE_RESIZE_VIDEO").unwrap_or("core.resize_video".to_string());
     
     let max_concurrent = std::env::var("MAX_CONCURRENT_TASKS")
-        .unwrap_or("10".to_string())
+        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS.to_string())
         .parse()
-        .unwrap_or(10);
+        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS);
 
     info!("Listening on queue: {} (max concurrent: {})", queue_name, max_concurrent);
 
@@ -132,49 +133,53 @@ async fn process_resize_video(
     _task_id: &uuid::Uuid,
     s3_client: &S3Client,
 ) -> Result<serde_json::Value> {
-    info!("Starting video resize process for stream: {}", payload.stream_id);
     
-    let temp_dir = std::env::temp_dir().join(format!("resize_{}", payload.stream_id));
+    let temp_dir = std::env::temp_dir().join(&payload.stream_id);
     tokio::fs::create_dir_all(&temp_dir)
         .await
         .context("Failed to create temporary directory")?;
+    
+    let result = process_resize_video_inner(payload, s3_client, &temp_dir).await;
+    
+    if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
+        error!("Failed to clean up temporary directory for stream {}: {}", payload.stream_id, e);
+    }
+    
+    result
+}
+
+async fn process_resize_video_inner(
+    payload: &ResizeVideoPayload, 
+    s3_client: &S3Client,
+    temp_dir: &std::path::PathBuf,
+) -> Result<serde_json::Value> {
     
     let original_file_path = temp_dir.join(&payload.file_name);
     let resize_file_name = format!("{}_resize.mp4", payload.stream_id);
     let resized_file_path = temp_dir.join(&resize_file_name);
     
     let s3_original_path = format!("{}/{}", payload.stream_id, payload.file_name);
-    info!("Downloading original video: {}", s3_original_path);
     s3_client
         .download_file(&s3_original_path, &original_file_path.to_string_lossy())
         .await
         .context("Failed to download original video from S3")?;
     
-    info!("Processing video resize for stream: {}", payload.stream_id);
     tokio::fs::copy(&original_file_path, &resized_file_path)
         .await
         .context("Failed to create resized video file")?;
     
-    info!("Video resize processing completed for stream: {}", payload.stream_id);
     
     let s3_resized_path = format!("{}/{}", payload.stream_id, resize_file_name);
-    info!("Uploading resized video to S3: {}", s3_resized_path);
     s3_client
         .upload_file(&resized_file_path.to_string_lossy(), &s3_resized_path)
         .await
         .context("Failed to upload resized video to S3")?;
-    
-    info!("Cleaning up temporary files for stream: {}", payload.stream_id);
-    if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
-        error!("Failed to clean up temporary directory: {}", e);
-    }
     
     let result = serde_json::json!({
         "stream_id": payload.stream_id,
         "resize_file_name": resize_file_name,
     });
 
-    info!("Video resize process completed successfully for stream: {}", payload.stream_id);
     Ok(result)
 }
 

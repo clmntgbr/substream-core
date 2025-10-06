@@ -7,6 +7,8 @@ use tokio::sync::Semaphore;
 use tracing::{error, info};
 
 const TASK_TYPE: &str = "chunk_video";
+const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
+const VIDEO_OVERLAP_SECONDS: f64 = 8.0;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -35,9 +37,9 @@ async fn main() -> Result<()> {
     let queue_name = std::env::var("QUEUE_CHUNK_VIDEO").unwrap_or("core.chunk_video".to_string());
     
     let max_concurrent = std::env::var("MAX_CONCURRENT_TASKS")
-        .unwrap_or("10".to_string())
+        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS.to_string())
         .parse()
-        .unwrap_or(10);
+        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS);
 
     info!("Listening on queue: {} (max concurrent: {})", queue_name, max_concurrent);
 
@@ -132,34 +134,44 @@ async fn process_chunk_video(
     _task_id: &uuid::Uuid,
     s3_client: &S3Client,
 ) -> Result<serde_json::Value> {
-    info!("Starting video chunking process for stream: {}", payload.stream_id);
     
-    let temp_dir = std::env::temp_dir().join(format!("chunk_{}", payload.stream_id));
+    let temp_dir = std::env::temp_dir().join(&payload.stream_id);
     tokio::fs::create_dir_all(&temp_dir)
         .await
         .context("Failed to create temporary directory")?;
     
+    let result = process_chunk_video_inner(payload, s3_client, &temp_dir).await;
+    
+    if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
+        error!("Failed to clean up temporary directory for stream {}: {}", payload.stream_id, e);
+    }
+    
+    result
+}
+
+async fn process_chunk_video_inner(
+    payload: &ChunkVideoPayload, 
+    s3_client: &S3Client,
+    temp_dir: &std::path::PathBuf,
+) -> Result<serde_json::Value> {
+    
     let embed_file_path = temp_dir.join(&payload.embed_file_name);
     
     let s3_embed_path = format!("{}/{}", payload.stream_id, payload.embed_file_name);
-    info!("Downloading embedded video: {}", s3_embed_path);
     s3_client
         .download_file(&s3_embed_path, &embed_file_path.to_string_lossy())
         .await
         .context("Failed to download embedded video from S3")?;
     
-    info!("Processing video chunking for stream: {} ({} chunks)", payload.stream_id, payload.chunk_number);
     
-    let video_duration = get_video_duration(&embed_file_path.to_string_lossy())
+    let video_duration = get_video_duration(&embed_file_path.to_string_lossy().as_ref())
         .await
         .context("Failed to get video duration")?;
     
-    info!("Video duration: {:.2} seconds", video_duration);
     
     let chunk_duration = video_duration / payload.chunk_number as f64;
-    let overlap_seconds = 5.0;
+    let overlap_seconds = VIDEO_OVERLAP_SECONDS;
     
-    info!("Chunk duration: {:.2} seconds, overlap: {} seconds", chunk_duration, overlap_seconds);
     
     let mut chunk_file_names = Vec::new();
     
@@ -179,18 +191,15 @@ async fn process_chunk_video(
             i as f64 * chunk_duration 
         };
         
-        info!("Creating chunk {}/{}: {} (start: {:.2}s, end: {:.2}s, duration: {:.2}s)", 
-              i, payload.chunk_number, chunk_file_name, start_time, end_time, end_time - start_time);
         
-        extract_video_segment(&embed_file_path.to_string_lossy(), 
-                             &chunk_file_path.to_string_lossy(), 
+        extract_video_segment(&embed_file_path.to_string_lossy().as_ref(), 
+                             &chunk_file_path.to_string_lossy().as_ref(), 
                              start_time, 
                              end_time)
             .await
             .context(format!("Failed to extract chunk {}", chunk_file_name))?;
         
         let s3_chunk_path = format!("{}/{}", payload.stream_id, chunk_file_name);
-        info!("Uploading chunk to S3: {}", s3_chunk_path);
         s3_client
             .upload_file(&chunk_file_path.to_string_lossy(), &s3_chunk_path)
             .await
@@ -199,19 +208,12 @@ async fn process_chunk_video(
         chunk_file_names.push(chunk_file_name);
     }
     
-    info!("Video chunking processing completed for stream: {}", payload.stream_id);
-    
-    info!("Cleaning up temporary files for stream: {}", payload.stream_id);
-    if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
-        error!("Failed to clean up temporary directory: {}", e);
-    }
     
     let result = serde_json::json!({
         "stream_id": payload.stream_id,
         "chunk_file_names": chunk_file_names,
     });
 
-    info!("Video chunking process completed successfully for stream: {}", payload.stream_id);
     Ok(result)
 }
 
