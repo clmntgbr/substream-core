@@ -156,7 +156,7 @@ async fn process_embed_subtitle_inner(
     
     let resized_file_path = temp_dir.join(&payload.resize_file_name);
     let subtitle_file_path = temp_dir.join(&payload.subtitle_ass_file_name);
-    let embed_file_name = format!("{}_embedded.mp4", payload.stream_id);
+    let embed_file_name = format!("{}_embed.mp4", payload.stream_id);
     let embed_file_path = temp_dir.join(&embed_file_name);
     
     let s3_resized_path = format!("{}/{}", payload.stream_id, payload.resize_file_name);
@@ -171,10 +171,9 @@ async fn process_embed_subtitle_inner(
         .await
         .context("Failed to download subtitle file from S3")?;
     
-    tokio::fs::copy(&resized_file_path, &embed_file_path)
+    embed_subtitle_with_ffmpeg(&resized_file_path, &subtitle_file_path, &embed_file_path)
         .await
-        .context("Failed to create embedded video file")?;
-    
+        .context("Failed to embed subtitle into video")?;
     
     let s3_embed_path = format!("{}/{}", payload.stream_id, embed_file_name);
     s3_client
@@ -188,6 +187,46 @@ async fn process_embed_subtitle_inner(
     });
 
     Ok(result)
+}
+
+async fn embed_subtitle_with_ffmpeg(
+    input_video_path: &std::path::PathBuf,
+    subtitle_file_path: &std::path::PathBuf,
+    output_video_path: &std::path::PathBuf,
+) -> Result<()> {
+    use tokio::process::Command;
+    
+    info!(
+        "Embedding subtitle {} into video {} -> {}",
+        subtitle_file_path.display(),
+        input_video_path.display(),
+        output_video_path.display()
+    );
+    
+    let output = Command::new("ffmpeg")
+        .arg("-i").arg(&input_video_path)
+        .arg("-vf").arg(format!("ass={}", subtitle_file_path.display()))
+        .arg("-c:v").arg("libx264")
+        .arg("-preset").arg("ultrafast")    // 👈 10x plus rapide !
+        .arg("-crf").arg("28")
+        .arg("-threads").arg("0")           // Tous les CPU
+        .arg("-c:a").arg("copy")
+        .arg("-movflags").arg("+faststart")
+        .arg("-y")
+        .arg(&output_video_path)
+        .output()
+        .await
+        .context("Failed to execute ffmpeg command")?;
+
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        error!("FFmpeg failed with stderr: {}", stderr);    
+        return Err(anyhow::anyhow!("FFmpeg command failed: {}", stderr));
+    }
+    
+    info!("Successfully embedded subtitle into video");
+    Ok(())
 }
 
 async fn setup_shutdown_handler() {
