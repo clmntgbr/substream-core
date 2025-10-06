@@ -56,11 +56,21 @@ make dev-docker
 
 ## 🏗️ Architecture
 
-The system consists of four microservices that process tasks in a pipeline:
+The system consists of seven microservices that process tasks in a comprehensive video processing pipeline:
 
 ```
-Video URL → Get Video → Extract Sound → Generate Subtitle → Transform Subtitle
+Video URL → Get Video → Extract Sound → Generate Subtitle → Transform Subtitle → Resize Video → Embed Video → Chunk Video
 ```
+
+### Processing Pipeline
+
+1. **Get Video**: Downloads video from URL and stores in S3
+2. **Extract Sound**: Extracts audio segments from video for subtitle generation
+3. **Generate Subtitle**: Uses AssemblyAI to generate subtitles from audio
+4. **Transform Subtitle**: Converts subtitle formats (e.g., SRT to ASS)
+5. **Resize Video**: Resizes video to specified resolution/format
+6. **Embed Video**: Embeds subtitles into the resized video
+7. **Chunk Video**: Splits the final video into smaller chunks for distribution
 
 ### Services Overview
 
