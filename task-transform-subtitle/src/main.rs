@@ -290,7 +290,7 @@ async fn process_transform_subtitle(
     let temp_dir = std::env::var("TEMP_DIR").unwrap_or("/tmp".to_string());
     let srt_file_path = format!("{}/{}", temp_dir, payload.subtitle_srt_file_name);
     
-    let s3_srt_key = format!("{}/{}", payload.stream_id, payload.subtitle_srt_file_name);
+    let s3_srt_key = format!("{}/subtitles/{}", payload.stream_id, payload.subtitle_srt_file_name);
     s3_client
         .download_file(&s3_srt_key, &srt_file_path)
         .await
@@ -332,7 +332,7 @@ async fn process_transform_subtitle(
     
     info!("Created temporary ASS file: {}", temp_file_path);
     
-    let s3_key = format!("{}/{}", payload.stream_id, ass_file_name);
+    let s3_key = format!("{}/subtitles/{}", payload.stream_id, ass_file_name);
     s3_client
         .upload_file(&temp_file_path, &s3_key)
         .await

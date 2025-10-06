@@ -62,7 +62,7 @@ pub struct ResizeVideoPayload {
 pub struct EmbedSubtitlePayload {
     pub stream_id: String,
     pub subtitle_ass_file_name: String,
-    pub resized_file_name: String,
+    pub resize_file_name: String,
 }
 
 /// Payload for chunk_video task

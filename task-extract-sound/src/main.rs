@@ -247,7 +247,7 @@ async fn process_extract_sound(
         }
 
         temp_segments.push(segment_path.clone());
-        let s3_key = format!("{}/{}", payload.stream_id, segment_file_name);
+        let s3_key = format!("{}/audios/{}", payload.stream_id, segment_file_name);
 
         let upload_result = s3_client
             .upload_file(&segment_path, &s3_key)

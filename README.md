@@ -147,7 +147,7 @@ All tasks use a consistent message structure:
 {
   "stream_id": "unique-stream-identifier",
   "subtitle_ass_file_name": "subtitles.ass",
-  "resized_file_name": "resized_video.mp4"
+  "resize_file_name": "resize_video.mp4"
 }
 ```
 

@@ -161,7 +161,7 @@ async fn process_generate_subtitle(
         let task = tokio::spawn(async move {
             let _permit = semaphore.acquire().await.unwrap();
             
-            let s3_path = format!("{}/{}", stream_id, audio_file);
+            let s3_path = format!("{}/audios/{}", stream_id, audio_file);
             
             process_single_audio_file(
                 &s3_client_clone,
@@ -205,7 +205,7 @@ async fn process_generate_subtitle(
     tokio::fs::write(&srt_path, &merged_srt).await
         .context("Failed to write merged SRT file")?;
 
-    let s3_srt_path = format!("{}/{}", payload.stream_id, srt_filename);
+    let s3_srt_path = format!("{}/subtitles/{}", payload.stream_id, srt_filename);
     
     s3_client.as_ref().upload_file(
         srt_path.to_str().unwrap(),

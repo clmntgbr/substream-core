@@ -130,20 +130,137 @@ async fn main() -> Result<()> {
 async fn process_chunk_video(
     payload: &ChunkVideoPayload, 
     _task_id: &uuid::Uuid,
-    _s3_client: &S3Client,
+    s3_client: &S3Client,
 ) -> Result<serde_json::Value> {
-    let mut chunked_file_names = Vec::new();
+    info!("Starting video chunking process for stream: {}", payload.stream_id);
+    
+    let temp_dir = std::env::temp_dir().join(format!("chunk_{}", payload.stream_id));
+    tokio::fs::create_dir_all(&temp_dir)
+        .await
+        .context("Failed to create temporary directory")?;
+    
+    let embed_file_path = temp_dir.join(&payload.embed_file_name);
+    
+    let s3_embed_path = format!("{}/{}", payload.stream_id, payload.embed_file_name);
+    info!("Downloading embedded video: {}", s3_embed_path);
+    s3_client
+        .download_file(&s3_embed_path, &embed_file_path.to_string_lossy())
+        .await
+        .context("Failed to download embedded video from S3")?;
+    
+    info!("Processing video chunking for stream: {} ({} chunks)", payload.stream_id, payload.chunk_number);
+    
+    let video_duration = get_video_duration(&embed_file_path.to_string_lossy())
+        .await
+        .context("Failed to get video duration")?;
+    
+    info!("Video duration: {:.2} seconds", video_duration);
+    
+    let chunk_duration = video_duration / payload.chunk_number as f64;
+    let overlap_seconds = 5.0;
+    
+    info!("Chunk duration: {:.2} seconds, overlap: {} seconds", chunk_duration, overlap_seconds);
+    
+    let mut chunk_file_names = Vec::new();
     
     for i in 1..=payload.chunk_number {
-        chunked_file_names.push(format!("chunk_{:03}_{}", i, payload.embed_file_name));
+        let chunk_file_name = format!("{}_{:03}.mp4", payload.stream_id, i);
+        let chunk_file_path = temp_dir.join(&chunk_file_name);
+        
+        let start_time = if i == 1 { 
+            0.0 
+        } else { 
+            (i - 1) as f64 * chunk_duration - overlap_seconds 
+        };
+        
+        let end_time = if i == payload.chunk_number { 
+            video_duration 
+        } else { 
+            i as f64 * chunk_duration 
+        };
+        
+        info!("Creating chunk {}/{}: {} (start: {:.2}s, end: {:.2}s, duration: {:.2}s)", 
+              i, payload.chunk_number, chunk_file_name, start_time, end_time, end_time - start_time);
+        
+        extract_video_segment(&embed_file_path.to_string_lossy(), 
+                             &chunk_file_path.to_string_lossy(), 
+                             start_time, 
+                             end_time)
+            .await
+            .context(format!("Failed to extract chunk {}", chunk_file_name))?;
+        
+        let s3_chunk_path = format!("{}/{}", payload.stream_id, chunk_file_name);
+        info!("Uploading chunk to S3: {}", s3_chunk_path);
+        s3_client
+            .upload_file(&chunk_file_path.to_string_lossy(), &s3_chunk_path)
+            .await
+            .context(format!("Failed to upload chunk {} to S3", chunk_file_name))?;
+        
+        chunk_file_names.push(chunk_file_name);
+    }
+    
+    info!("Video chunking processing completed for stream: {}", payload.stream_id);
+    
+    info!("Cleaning up temporary files for stream: {}", payload.stream_id);
+    if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
+        error!("Failed to clean up temporary directory: {}", e);
     }
     
     let result = serde_json::json!({
-        "chunked_file_names": chunked_file_names,
         "stream_id": payload.stream_id,
+        "chunk_file_names": chunk_file_names,
     });
 
+    info!("Video chunking process completed successfully for stream: {}", payload.stream_id);
     Ok(result)
+}
+
+async fn get_video_duration(file_path: &str) -> Result<f64> {
+    let output = tokio::process::Command::new("ffprobe")
+        .args([
+            "-v", "quiet",
+            "-show_entries", "format=duration",
+            "-of", "csv=p=0",
+            file_path,
+        ])
+        .output()
+        .await
+        .context("Failed to execute ffprobe")?;
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!("ffprobe failed: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+
+    let duration_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    duration_str.parse::<f64>()
+        .context(format!("Failed to parse video duration: {}", duration_str))
+}
+
+async fn extract_video_segment(input_path: &str, output_path: &str, start_time: f64, end_time: f64) -> Result<()> {
+    let duration = end_time - start_time;
+    
+    let output = tokio::process::Command::new("ffmpeg")
+        .args([
+            "-i", input_path,
+            "-ss", &start_time.to_string(),
+            "-t", &duration.to_string(),
+            "-c", "copy",
+            "-avoid_negative_ts", "make_zero",
+            "-y",
+            output_path,
+        ])
+        .output()
+        .await
+        .context("Failed to execute ffmpeg")?;
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "ffmpeg failed: {}", 
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(())
 }
 
 async fn setup_shutdown_handler() {
