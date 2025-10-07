@@ -226,7 +226,7 @@ async fn embed_subtitle_with_ffmpeg(
         .arg("-b:v").arg(&target_bitrate)
         .arg("-maxrate").arg(&target_bitrate)
         .arg("-bufsize").arg(format!("{}k", bitrate / 500))
-        .arg("-preset").arg("superfast")    // 👈 5-8x plus rapide
+        .arg("-preset").arg("superfast")
         .arg("-threads").arg("0")
         .arg("-c:a").arg("copy")
         .arg("-movflags").arg("+faststart")
