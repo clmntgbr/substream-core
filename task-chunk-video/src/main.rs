@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
                                                     &message.webhook_url_failure,
                                                     message.payload.task_id,
                                                     TASK_TYPE,
-                                                    &message.payload.stream_id,
+                                                    &message.payload.stream_id.to_string(),
                                                 )
                                                 .await
                                             {
