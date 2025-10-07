@@ -15,7 +15,6 @@ use std::path::Path;
 /// Common message structure for all tasks (generic over payload type)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskMessage<T> {
-    pub task_id: Uuid,
     pub payload: T,
     pub webhook_url_success: String,
     pub webhook_url_failure: String,
@@ -24,35 +23,40 @@ pub struct TaskMessage<T> {
 /// Payload for get_video task
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetVideoPayload {
+    pub task_id: Uuid,
     pub url: String,
-    pub stream_id: String,
+    pub stream_id: Uuid,
 }
 
 /// Payload for extract_sound task
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractSoundPayload {
+    pub task_id: Uuid,
     pub file_name: String,
-    pub stream_id: String,
+    pub stream_id: Uuid,
 }
 
 /// Payload for generate_subtitle task
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateSubtitlePayload {
-    pub stream_id: String,
+    pub task_id: Uuid,
+    pub stream_id: Uuid,
     pub audio_files: Vec<String>,
 }
 
 /// Payload for transform_subtitle task
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransformSubtitlePayload {
-    pub stream_id: String,
+    pub task_id: Uuid,
+    pub stream_id: Uuid,
     pub subtitle_srt_file_name: String,
 }
 
 /// Payload for resize_video task
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResizeVideoPayload {
-    pub stream_id: String,
+    pub task_id: Uuid,
+    pub stream_id: Uuid,
     pub file_name: String,
     pub format: String,
 }
@@ -60,7 +64,8 @@ pub struct ResizeVideoPayload {
 /// Payload for embed_subtitle task
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbedSubtitlePayload {
-    pub stream_id: String,
+    pub task_id: Uuid,
+    pub stream_id: Uuid,
     pub subtitle_ass_file_name: String,
     pub resize_file_name: String,
 }
@@ -68,7 +73,8 @@ pub struct EmbedSubtitlePayload {
 /// Payload for chunk_video task
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkVideoPayload {
-    pub stream_id: String,
+    pub task_id: Uuid,
+    pub stream_id: Uuid,
     pub embed_file_name: String,
     pub chunk_number: u32,
 }

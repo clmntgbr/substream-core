@@ -88,16 +88,16 @@ async fn main() -> Result<()> {
                                     let _permit = semaphore.acquire().await.unwrap();
                                     
                                     info!("Processing stream: {}", message.payload.stream_id);
-                                    info!("Task ID: {}", message.task_id);
+                                    info!("Task ID: {}", message.payload.task_id);
 
-                                    match process_get_video(&message.payload, &message.task_id, &s3_client).await {
+                                    match process_get_video(&message.payload, &message.payload.task_id, &s3_client).await {
                                         Ok(result) => {
                                             info!("Stream {} completed successfully", message.payload.stream_id);
 
                                             if let Err(e) = webhook_client
                                                 .send_success(
                                                     &message.webhook_url_success,
-                                                    message.task_id,
+                                                    message.payload.task_id,
                                                     TASK_TYPE,
                                                     result,
                                                 )
@@ -112,7 +112,7 @@ async fn main() -> Result<()> {
                                             if let Err(webhook_err) = webhook_client
                                                 .send_error_with_stream(
                                                     &message.webhook_url_failure,
-                                                    message.task_id,
+                                                    message.payload.task_id,
                                                     TASK_TYPE,
                                                     &message.payload.stream_id,
                                                 )
@@ -157,11 +157,13 @@ async fn process_get_video(
     _task_id: &uuid::Uuid,
     s3_client: &S3Client,
 ) -> Result<serde_json::Value> {
+    let start_time = std::time::Instant::now();
+    
     let temp_dir = "/tmp/videos";
     tokio::fs::create_dir_all(temp_dir).await?;
     
     let temp_dir_cleanup = temp_dir.to_string();
-    let stream_id_cleanup = payload.stream_id.clone();
+    let stream_id_cleanup = payload.stream_id.to_string();
     let _cleanup_guard = CleanupGuard::new(move || {
         let temp_dir = temp_dir_cleanup.clone();
         let stream_id = stream_id_cleanup.clone();
@@ -287,6 +289,7 @@ async fn process_get_video(
         "mime_type": "video/mp4",
         "size": file_size,
         "stream_id": payload.stream_id,
+        "processing_time": start_time.elapsed().as_millis(),
     }))
 }
 

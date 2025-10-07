@@ -67,16 +67,16 @@ async fn main() -> Result<()> {
                                     let _permit = semaphore.acquire().await.unwrap();
                                     
                                     info!("Processing stream: {}", message.payload.stream_id);
-                                    info!("Task ID: {}", message.task_id);
+                                    info!("Task ID: {}", message.payload.task_id);
 
-                                    match process_resize_video(&message.payload, &message.task_id, &s3_client).await {
+                                    match process_resize_video(&message.payload, &message.payload.task_id, &s3_client).await {
                                         Ok(result) => {
                                             info!("Stream {} completed successfully", message.payload.stream_id);
 
                                             if let Err(e) = webhook_client
                                                 .send_success(
                                                     &message.webhook_url_success,
-                                                    message.task_id,
+                                                    message.payload.task_id,
                                                     TASK_TYPE,
                                                     result,
                                                 )
@@ -91,7 +91,7 @@ async fn main() -> Result<()> {
                                             if let Err(webhook_err) = webhook_client
                                                 .send_error(
                                                     &message.webhook_url_failure,
-                                                    message.task_id,
+                                                    message.payload.task_id,
                                                     TASK_TYPE,
                                                     &message.payload.stream_id,
                                                 )
@@ -134,12 +134,14 @@ async fn process_resize_video(
     s3_client: &S3Client,
 ) -> Result<serde_json::Value> {
     
-    let temp_dir = std::env::temp_dir().join(&payload.stream_id);
+    let start_time = std::time::Instant::now();
+    
+    let temp_dir = std::env::temp_dir().join(payload.stream_id.to_string());
     tokio::fs::create_dir_all(&temp_dir)
         .await
         .context("Failed to create temporary directory")?;
     
-    let result = process_resize_video_inner(payload, s3_client, &temp_dir).await;
+    let result = process_resize_video_inner(payload, s3_client, &temp_dir, &start_time).await;
     
     if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
         error!("Failed to clean up temporary directory for stream {}: {}", payload.stream_id, e);
@@ -152,6 +154,7 @@ async fn process_resize_video_inner(
     payload: &ResizeVideoPayload, 
     s3_client: &S3Client,
     temp_dir: &std::path::PathBuf,
+    start_time: &std::time::Instant,
 ) -> Result<serde_json::Value> {
     
     let original_file_path = temp_dir.join(&payload.file_name);
@@ -178,6 +181,7 @@ async fn process_resize_video_inner(
     let result = serde_json::json!({
         "stream_id": payload.stream_id,
         "resize_file_name": resize_file_name,
+        "processing_time": start_time.elapsed().as_millis(),
     });
 
     Ok(result)

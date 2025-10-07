@@ -75,16 +75,16 @@ async fn main() -> Result<()> {
                                     let _permit = semaphore.acquire().await.unwrap();
                                     
                                     info!("Processing stream: {}", message.payload.stream_id);
-                                    info!("Task ID: {}", message.task_id);
+                                    info!("Task ID: {}", message.payload.task_id);
 
-                                    match process_generate_subtitle(&message.payload, &message.task_id).await {
+                                    match process_generate_subtitle(&message.payload, &message.payload.task_id).await {
                                         Ok(result) => {
                                             info!("Stream {} completed successfully", message.payload.stream_id);
 
                                             if let Err(e) = webhook_client
                                                 .send_success(
                                                     &message.webhook_url_success,
-                                                    message.task_id,
+                                                    message.payload.task_id,
                                                     TASK_TYPE,
                                                     result,
                                                 )
@@ -99,7 +99,7 @@ async fn main() -> Result<()> {
                                             if let Err(webhook_err) = webhook_client
                                                 .send_error_with_stream(
                                                     &message.webhook_url_failure,
-                                                    message.task_id,
+                                                    message.payload.task_id,
                                                     TASK_TYPE,
                                                     &message.payload.stream_id,
                                                 )
@@ -144,17 +144,19 @@ async fn process_generate_subtitle(
     _task_id: &uuid::Uuid,
 ) -> Result<serde_json::Value> {
 
+    let start_time = std::time::Instant::now();
+
     let assemblyai_api_key = std::env::var("ASSEMBLYAI_API_KEY")
         .context("ASSEMBLYAI_API_KEY environment variable not set")?;
     
     let s3_client = Arc::new(S3Client::from_env().await
         .context("Failed to create S3 client")?);
 
-    let temp_dir = std::env::temp_dir().join(&payload.stream_id);
+    let temp_dir = std::env::temp_dir().join(payload.stream_id.to_string());
     tokio::fs::create_dir_all(&temp_dir).await
         .context("Failed to create temporary directory")?;
     
-    let result = process_generate_subtitle_inner(payload, &s3_client, &temp_dir, assemblyai_api_key).await;
+    let result = process_generate_subtitle_inner(payload, &s3_client, &temp_dir, assemblyai_api_key, &start_time).await;
     
     if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
         error!("Failed to clean up temporary directory for stream {}: {}", payload.stream_id, e);
@@ -168,6 +170,7 @@ async fn process_generate_subtitle_inner(
     s3_client: &Arc<S3Client>,
     temp_dir: &std::path::PathBuf,
     assemblyai_api_key: String,
+    start_time: &std::time::Instant,
 ) -> Result<serde_json::Value> {
 
     let semaphore = Arc::new(Semaphore::new(MAX_PARALLEL_FILES));
@@ -176,7 +179,7 @@ async fn process_generate_subtitle_inner(
     for (index, audio_file) in payload.audio_files.iter().enumerate() {
         let s3_client_clone = Arc::clone(&s3_client);
         let api_key = assemblyai_api_key.clone();
-        let stream_id = payload.stream_id.clone();
+        let stream_id = payload.stream_id.to_string();
         let audio_file = audio_file.clone();
         let temp_dir = temp_dir.clone();
         let semaphore = Arc::clone(&semaphore);
@@ -238,6 +241,7 @@ async fn process_generate_subtitle_inner(
     Ok(serde_json::json!({
         "stream_id": payload.stream_id,
         "subtitle_srt_file_name": srt_filename,
+        "processing_time": start_time.elapsed().as_millis(),
     }))
 }
 

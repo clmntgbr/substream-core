@@ -82,16 +82,16 @@ async fn main() -> Result<()> {
                                     let _permit = semaphore.acquire().await.unwrap();
                                     
                                     info!("Processing stream: {}", message.payload.stream_id);
-                                    info!("Task ID: {}", message.task_id);
+                                    info!("Task ID: {}", message.payload.task_id);
 
-                                    match process_transform_subtitle(&message.payload, &message.task_id, &s3_client).await {
+                                    match process_transform_subtitle(&message.payload, &message.payload.task_id, &s3_client).await {
                                         Ok(result) => {
                                             info!("Stream {} completed successfully", message.payload.stream_id);
 
                                             if let Err(e) = webhook_client
                                                 .send_success(
                                                     &message.webhook_url_success,
-                                                    message.task_id,
+                                                    message.payload.task_id,
                                                     TASK_TYPE,
                                                     result,
                                                 )
@@ -106,7 +106,7 @@ async fn main() -> Result<()> {
                                             if let Err(webhook_err) = webhook_client
                                                 .send_error_with_stream(
                                                     &message.webhook_url_failure,
-                                                    message.task_id,
+                                                    message.payload.task_id,
                                                     TASK_TYPE,
                                                     &message.payload.stream_id,
                                                 )
@@ -291,12 +291,14 @@ async fn process_transform_subtitle(
     s3_client: &S3Client,
 ) -> Result<serde_json::Value> {
     
-    let temp_dir = std::env::temp_dir().join(&payload.stream_id);
+    let start_time = std::time::Instant::now();
+    
+    let temp_dir = std::env::temp_dir().join(payload.stream_id.to_string());
     tokio::fs::create_dir_all(&temp_dir)
         .await
         .context("Failed to create temporary directory")?;
     
-    let result = process_transform_subtitle_inner(payload, s3_client, &temp_dir).await;
+    let result = process_transform_subtitle_inner(payload, s3_client, &temp_dir, &start_time).await;
     
     if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
         error!("Failed to clean up temporary directory for stream {}: {}", payload.stream_id, e);
@@ -309,6 +311,7 @@ async fn process_transform_subtitle_inner(
     payload: &TransformSubtitlePayload, 
     s3_client: &S3Client,
     temp_dir: &std::path::PathBuf,
+    start_time: &std::time::Instant,
 ) -> Result<serde_json::Value> {
     
     let srt_file_path = temp_dir.join(&payload.subtitle_srt_file_name);
@@ -351,6 +354,7 @@ async fn process_transform_subtitle_inner(
     Ok(serde_json::json!({
         "stream_id": payload.stream_id,
         "subtitle_ass_file_name": ass_file_name,
+        "processing_time": start_time.elapsed().as_millis(),
     }))
 }
 
