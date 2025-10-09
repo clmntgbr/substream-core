@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use lapin::options::BasicAckOptions;
-use shared::{TransformSubtitlePayload, RabbitMQClient, RabbitMQConfig, TaskMessage, WebhookClient, S3Client};
+use shared::{TransformSubtitlePayload, SubtitleOption, RabbitMQClient, RabbitMQConfig, TaskMessage, WebhookClient, S3Client};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{error, info};
@@ -229,17 +229,18 @@ fn convert_color(hex_color: &str) -> String {
     }
 }
 
-fn create_ass_content(entries: Vec<SubtitleEntry>) -> String {
-    let subtitle_font = SUBTITLE_FONT;
-    let subtitle_size = SUBTITLE_SIZE;
-    let subtitle_color = SUBTITLE_COLOR;
-    let subtitle_outline_color = SUBTITLE_OUTLINE_COLOR;
-    let subtitle_bold = SUBTITLE_BOLD;
-    let subtitle_italic = SUBTITLE_ITALIC;
-    let subtitle_underline = SUBTITLE_UNDERLINE;
-    let subtitle_outline_thickness = SUBTITLE_OUTLINE_THICKNESS;
-    let subtitle_shadow = SUBTITLE_SHADOW;
-    let y_axis_alignment = Y_AXIS_ALIGNMENT;
+fn create_ass_content(entries: Vec<SubtitleEntry>, options: &SubtitleOption) -> String {
+    let subtitle_font = &options.subtitle_font;
+    let subtitle_size = &options.subtitle_size;
+    let subtitle_color = &options.subtitle_color;
+    let subtitle_outline_color = &options.subtitle_outline_color;
+    let subtitle_bold = &options.subtitle_bold;
+    let subtitle_italic = &options.subtitle_italic;
+    let subtitle_underline = &options.subtitle_underline;
+    let subtitle_outline_thickness = &options.subtitle_outline_thickness;
+    let subtitle_shadow = &options.subtitle_shadow;
+    let subtitle_shadow_color = &options.subtitle_shadow_color;
+    let y_axis_alignment = &options.y_axis_alignment;
     
     let mut ass_content = format!(
 r#"[Script Info]
@@ -250,7 +251,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name,Fontname, Fontsize,PrimaryColour, SecondaryColour,OutlineColour, BackColour, Bold, Italic, Underline,StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default, {},{}, {}, {}, {},&H00000000, {}, {},{}, 0, 100, 100, 0, 0,1, {}, {},2,{},{},{},0
+Style: Default, {},{}, {}, {}, {}, {}, {}, {},{}, 0, 100, 100, 0, 0,1, {}, {},2,{},{},{},0
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -263,6 +264,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         convert_color(subtitle_color),
         convert_color(subtitle_color),
         convert_color(subtitle_outline_color),
+        convert_color(subtitle_shadow_color),
         subtitle_bold,
         subtitle_italic,
         subtitle_underline,
@@ -330,7 +332,7 @@ async fn process_transform_subtitle_inner(
         .context("Failed to parse SRT content")?;
     
     
-    let ass_content = create_ass_content(entries);
+    let ass_content = create_ass_content(entries, &payload.option);
     
     if let Err(e) = tokio::fs::remove_file(&srt_file_path).await {
         error!("Failed to remove temporary SRT file: {}", e);
