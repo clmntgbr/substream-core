@@ -47,28 +47,17 @@ pub struct GenerateSubtitlePayload {
 /// Options for subtitle styling
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubtitleOption {
-    #[serde(rename = "subtitleFont")]
     pub subtitle_font: String,
-    #[serde(rename = "subtitleSize")]
-    pub subtitle_size: String,
-    #[serde(rename = "subtitleColor")]
+    pub subtitle_size: u32,
     pub subtitle_color: String,
-    #[serde(rename = "subtitleBold")]
-    pub subtitle_bold: String,
-    #[serde(rename = "subtitleItalic")]
-    pub subtitle_italic: String,
-    #[serde(rename = "subtitleUnderline")]
-    pub subtitle_underline: String,
-    #[serde(rename = "subtitleOutlineColor")]
+    pub subtitle_bold: bool,
+    pub subtitle_italic: bool,
+    pub subtitle_underline: bool,
     pub subtitle_outline_color: String,
-    #[serde(rename = "subtitleOutlineThickness")]
-    pub subtitle_outline_thickness: String,
-    #[serde(rename = "subtitleShadow")]
-    pub subtitle_shadow: String,
-    #[serde(rename = "subtitleShadowColor")]
+    pub subtitle_outline_thickness: u32,
+    pub subtitle_shadow: u32,
     pub subtitle_shadow_color: String,
-    #[serde(rename = "yAxisAlignment")]
-    pub y_axis_alignment: String,
+    pub y_axis_alignment: f64,
 }
 
 /// Payload for transform_subtitle task

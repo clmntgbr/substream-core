@@ -11,16 +11,6 @@ const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
 const MIN_SRT_BLOCK_LINES: usize = 3;
 const TIMESTAMP_PARTS_COUNT: usize = 2;
 const HEX_COLOR_LENGTH: usize = 6;
-const SUBTITLE_FONT: &str = "Arial";
-const SUBTITLE_SIZE: &str = "15";
-const SUBTITLE_COLOR: &str = "#FFFFFF";
-const SUBTITLE_OUTLINE_COLOR: &str = "#000000";
-const SUBTITLE_BOLD: &str = "0";
-const SUBTITLE_ITALIC: &str = "0";
-const SUBTITLE_UNDERLINE: &str = "0";
-const SUBTITLE_OUTLINE_THICKNESS: &str = "2";
-const SUBTITLE_SHADOW: &str = "SIMPLE";
-const Y_AXIS_ALIGNMENT: &str = "10";
 const SCRIPT_TYPE: &str = "v4.00+";
 const PLAY_RES_X: u32 = 384;
 const PLAY_RES_Y: u32 = 288;
@@ -231,16 +221,16 @@ fn convert_color(hex_color: &str) -> String {
 
 fn create_ass_content(entries: Vec<SubtitleEntry>, options: &SubtitleOption) -> String {
     let subtitle_font = &options.subtitle_font;
-    let subtitle_size = &options.subtitle_size;
+    let subtitle_size = options.subtitle_size;
     let subtitle_color = &options.subtitle_color;
     let subtitle_outline_color = &options.subtitle_outline_color;
-    let subtitle_bold = &options.subtitle_bold;
-    let subtitle_italic = &options.subtitle_italic;
-    let subtitle_underline = &options.subtitle_underline;
-    let subtitle_outline_thickness = &options.subtitle_outline_thickness;
-    let subtitle_shadow = &options.subtitle_shadow;
+    let subtitle_bold = if options.subtitle_bold { "1" } else { "0" };
+    let subtitle_italic = if options.subtitle_italic { "1" } else { "0" };
+    let subtitle_underline = if options.subtitle_underline { "1" } else { "0" };
+    let subtitle_outline_thickness = options.subtitle_outline_thickness;
+    let subtitle_shadow = if options.subtitle_shadow > 0 { "1" } else { "0" };
     let subtitle_shadow_color = &options.subtitle_shadow_color;
-    let y_axis_alignment = &options.y_axis_alignment;
+    let y_axis_alignment = (options.y_axis_alignment * 10.0) as u32;
     
     let mut ass_content = format!(
 r#"[Script Info]
@@ -269,7 +259,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         subtitle_italic,
         subtitle_underline,
         subtitle_outline_thickness,
-        if subtitle_shadow != "NONE" { "1" } else { "0" },
+        subtitle_shadow,
         y_axis_alignment,
         MARGIN_L,
         MARGIN_R
