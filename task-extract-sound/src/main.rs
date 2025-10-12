@@ -136,6 +136,36 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+async fn get_video_duration(video_path: &str) -> Result<u64> {
+    let output = Command::new("ffprobe")
+        .arg("-v")
+        .arg("error")
+        .arg("-show_entries")
+        .arg("format=duration")
+        .arg("-of")
+        .arg("default=noprint_wrappers=1:nokey=1")
+        .arg(video_path)
+        .output()
+        .await
+        .context("Failed to execute ffprobe")?;
+
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("ffprobe failed: {}", error));
+    }
+
+    let duration_str = String::from_utf8_lossy(&output.stdout);
+    let duration_float = duration_str
+        .trim()
+        .parse::<f64>()
+        .context("Failed to parse video duration")?;
+
+    // Round to nearest second
+    let duration = duration_float.round() as u64;
+
+    Ok(duration)
+}
+
 async fn process_extract_sound(
     payload: &ExtractSoundPayload, 
     _task_id: &uuid::Uuid,
@@ -169,6 +199,13 @@ async fn process_extract_sound_inner(
         .download_file(&video_s3_key, &temp_video_path.to_string_lossy())
         .await
         .context("Failed to download video from S3")?;
+
+    // Get video duration
+    let duration = get_video_duration(&temp_video_path.to_string_lossy())
+        .await
+        .context("Failed to get video duration")?;
+    
+    info!("Video duration: {} seconds", duration);
 
     let audio_output_pattern = format!("{}/{}_%03d.wav", temp_dir.to_string_lossy(), payload.stream_id);
 
@@ -225,6 +262,7 @@ async fn process_extract_sound_inner(
     Ok(serde_json::json!({
         "stream_id": payload.stream_id,
         "audio_files": audio_files,
+        "duration": duration,
         "processing_time": start_time.elapsed().as_millis(),
     }))
 }
