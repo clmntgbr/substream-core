@@ -15,6 +15,11 @@ COPY task-get-video ./task-get-video
 COPY task-extract-sound ./task-extract-sound
 COPY task-generate-subtitle ./task-generate-subtitle
 COPY task-transform-subtitle ./task-transform-subtitle
+COPY task-resume-video ./task-resume-video
+COPY task-chunk-video ./task-chunk-video
+COPY task-resize-video ./task-resize-video
+COPY task-embed-video ./task-embed-video
+
 
 # Build all packages in workspace
 RUN cargo build --release
@@ -48,6 +53,11 @@ COPY --from=builder /app/target/release/task-get-video /app/task-get-video
 COPY --from=builder /app/target/release/task-extract-sound /app/task-extract-sound
 COPY --from=builder /app/target/release/task-generate-subtitle /app/task-generate-subtitle
 COPY --from=builder /app/target/release/task-transform-subtitle /app/task-transform-subtitle
+COPY --from=builder /app/target/release/task-resume-video /app/task-resume-video
+COPY --from=builder /app/target/release/task-chunk-video /app/task-chunk-video
+COPY --from=builder /app/target/release/task-resize-video /app/task-resize-video
+COPY --from=builder /app/target/release/task-embed-video /app/task-embed-video
+
 
 # Switch to non-root user
 USER appuser

@@ -127,6 +127,24 @@ services:
     networks:
       - substream-network
 
+  task-resume-video:
+    container_name: ${PROJECT_NAME}-task-resume-video
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: /app/task-resume-video
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "task-resume-video"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - substream-network
+
 networks:
   substream-network:
     external: true

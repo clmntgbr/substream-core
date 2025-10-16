@@ -96,6 +96,14 @@ pub struct ChunkVideoPayload {
     pub chunk_number: u32,
 }
 
+/// Payload for resume_video task
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResumeVideoPayload {
+    pub task_id: Uuid,
+    pub stream_id: Uuid,
+    pub subtitle_srt_file_name: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebhookResponse {
     pub task_id: Uuid,

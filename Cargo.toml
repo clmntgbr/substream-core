@@ -8,6 +8,7 @@ members = [
     "task-resize-video",
     "task-embed-video",
     "task-chunk-video",
+    "task-resume-video",
 ]
 resolver = "2"
 
