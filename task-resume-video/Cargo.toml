@@ -16,5 +16,5 @@ uuid = { workspace = true }
 anyhow = { workspace = true }
 dotenvy = { workspace = true }
 futures = { workspace = true }
-rand = "0.8"
+reqwest = { workspace = true }
 
