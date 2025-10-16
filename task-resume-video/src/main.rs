@@ -208,7 +208,7 @@ async fn generate_summary_with_chatgpt(srt_content: &str, api_key: &str) -> Resu
                 content: prompt,
             },
         ],
-        max_tokens: 1000,
+        max_tokens: 500,
         temperature: 0.7,
     };
     
