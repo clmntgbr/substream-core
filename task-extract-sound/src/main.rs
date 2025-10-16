@@ -8,7 +8,7 @@ use tracing::{error, info};
 use tokio::process::Command;
 
 const TASK_TYPE: &str = "extract_sound";
-const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
+const DEFAULT_MAX_CONCURRENT_TASKS: usize = 5;
 const AUDIO_SEGMENT_DURATION_SECONDS: u32 = 300;
 const AUDIO_SAMPLE_RATE: u32 = 16000;
 const AUDIO_CHANNELS: u32 = 1;
@@ -40,10 +40,7 @@ async fn main() -> Result<()> {
 
     let queue_name = std::env::var("QUEUE_EXTRACT_SOUND").unwrap_or("core.extract_sound".to_string());
     
-    let max_concurrent = std::env::var("MAX_CONCURRENT_TASKS")
-        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS.to_string())
-        .parse()
-        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS);
+    let max_concurrent = DEFAULT_MAX_CONCURRENT_TASKS;
 
     info!("Listening on queue: {} (max concurrent: {})", queue_name, max_concurrent);
 

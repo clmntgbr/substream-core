@@ -40,10 +40,7 @@ async fn main() -> Result<()> {
 
     let queue_name = std::env::var("QUEUE_TRANSFORM_SUBTITLE").unwrap_or("core.transform_subtitle".to_string());
     
-    let max_concurrent = std::env::var("MAX_CONCURRENT_TASKS")
-        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS.to_string())
-        .parse()
-        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS);
+    let max_concurrent = DEFAULT_MAX_CONCURRENT_TASKS;
 
     info!("Listening on queue: {} (max concurrent: {})", queue_name, max_concurrent);
 

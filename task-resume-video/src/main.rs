@@ -8,7 +8,7 @@ use tracing::{error, info};
 use serde::{Deserialize, Serialize};
 
 const TASK_TYPE: &str = "resume_video";
-const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
+const DEFAULT_MAX_CONCURRENT_TASKS: usize = 2;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -32,10 +32,7 @@ async fn main() -> Result<()> {
 
     let queue_name = std::env::var("QUEUE_RESUME_VIDEO").unwrap_or("core.resume_video".to_string());
     
-    let max_concurrent = std::env::var("MAX_CONCURRENT_TASKS")
-        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS.to_string())
-        .parse()
-        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS);
+    let max_concurrent = DEFAULT_MAX_CONCURRENT_TASKS;
 
     info!("Listening on queue: {} (max concurrent: {})", queue_name, max_concurrent);
 

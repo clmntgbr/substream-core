@@ -9,6 +9,7 @@ use tokio::process::Command;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 const TASK_TYPE: &str = "get_video";
+const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
 
 struct CleanupGuard<F: FnOnce()> {
     cleanup_fn: Option<F>,
@@ -56,10 +57,7 @@ async fn main() -> Result<()> {
 
     let queue_name = std::env::var("QUEUE_GET_VIDEO").unwrap_or("core.get_video".to_string());
     
-    let max_concurrent = std::env::var("MAX_CONCURRENT_TASKS")
-        .unwrap_or("10".to_string())
-        .parse()
-        .unwrap_or(10);
+    let max_concurrent = DEFAULT_MAX_CONCURRENT_TASKS;
 
     info!("Listening on queue: {} (max concurrent: {})", queue_name, max_concurrent);
 

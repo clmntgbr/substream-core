@@ -7,7 +7,7 @@ use tokio::sync::Semaphore;
 use tracing::{error, info};
 
 const TASK_TYPE: &str = "chunk_video";
-const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
+const DEFAULT_MAX_CONCURRENT_TASKS: usize = 5;
 const VIDEO_OVERLAP_SECONDS: f64 = 8.0;
 
 #[tokio::main]
@@ -36,10 +36,7 @@ async fn main() -> Result<()> {
 
     let queue_name = std::env::var("QUEUE_CHUNK_VIDEO").unwrap_or("core.chunk_video".to_string());
     
-    let max_concurrent = std::env::var("MAX_CONCURRENT_TASKS")
-        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS.to_string())
-        .parse()
-        .unwrap_or(DEFAULT_MAX_CONCURRENT_TASKS);
+    let max_concurrent = DEFAULT_MAX_CONCURRENT_TASKS;
 
     info!("Listening on queue: {} (max concurrent: {})", queue_name, max_concurrent);
 
