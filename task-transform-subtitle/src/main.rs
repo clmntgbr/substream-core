@@ -14,8 +14,8 @@ const HEX_COLOR_LENGTH: usize = 6;
 const SCRIPT_TYPE: &str = "v4.00+";
 const PLAY_RES_X: u32 = 384;
 const PLAY_RES_Y: u32 = 288;
-const MARGIN_L: u32 = 10;
-const MARGIN_R: u32 = 10;
+const MARGIN_L: u32 = 0;
+const MARGIN_R: u32 = 0;
 
 
 #[tokio::main]
@@ -230,7 +230,7 @@ fn create_ass_content(entries: Vec<SubtitleEntry>, options: &SubtitleOption) -> 
     let subtitle_outline_thickness = options.subtitle_outline_thickness;
     let subtitle_shadow = if options.subtitle_shadow > 0 { "1" } else { "0" };
     let subtitle_shadow_color = &options.subtitle_shadow_color;
-    let y_axis_alignment = (options.y_axis_alignment * 10.0) as u32;
+    let y_axis_alignment = options.y_axis_alignment.to_string();
     
     let mut ass_content = format!(
 r#"[Script Info]
@@ -260,9 +260,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         subtitle_underline,
         subtitle_outline_thickness,
         subtitle_shadow,
-        y_axis_alignment,
         MARGIN_L,
-        MARGIN_R
+        MARGIN_R,
+        y_axis_alignment,
     );
     
     for entry in entries {
