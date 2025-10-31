@@ -42,6 +42,7 @@ pub struct GenerateSubtitlePayload {
     pub task_id: Uuid,
     pub stream_id: Uuid,
     pub audio_files: Vec<String>,
+    pub language: String,
 }
 
 /// Options for subtitle styling

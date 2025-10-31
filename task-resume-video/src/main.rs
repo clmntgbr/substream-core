@@ -125,6 +125,24 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+#[derive(Serialize)]
+struct DeepSeekRequest {
+    model: String,
+    messages: Vec<ChatMessage>,
+    max_tokens: u32,
+    temperature: f32,
+}
+
+#[derive(Deserialize)]
+struct DeepSeekResponse {
+    choices: Vec<Choice>,
+}
+
+#[derive(Deserialize)]
+struct Choice {
+    message: ChatMessage,
+}
+
 #[derive(Debug, Serialize)]
 struct ChatGPTRequest {
     model: String,
@@ -175,7 +193,7 @@ fn clean_srt_content(srt_content: &str) -> String {
     cleaned_text.join(" ")
 }
 
-async fn generate_summary_with_chatgpt(srt_content: &str, api_key: &str) -> Result<String> {
+async fn generate_summary_with_chatgpt(srt_content: &str) -> Result<String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -211,9 +229,12 @@ async fn generate_summary_with_chatgpt(srt_content: &str, api_key: &str) -> Resu
     
     info!("Calling ChatGPT API to generate summary");
     
+    let openai_api_key = std::env::var("OPENAI_API_KEY")
+        .context("OPENAI_API_KEY environment variable not set")?;
+
     let response = match client
         .post("https://api.openai.com/v1/chat/completions")
-        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Authorization", format!("Bearer {}", openai_api_key))
         .header("Content-Type", "application/json")
         .json(&request_body)
         .send()
@@ -272,6 +293,104 @@ async fn generate_summary_with_chatgpt(srt_content: &str, api_key: &str) -> Resu
     Ok(summary)
 }
 
+async fn generate_summary_with_deepseek(srt_content: &str) -> Result<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .context("Failed to build HTTP client")?;
+
+    let cleaned_content = clean_srt_content(srt_content);
+    info!("SRT content: {}", cleaned_content);
+    info!("Cleaned SRT content: original {} chars -> cleaned {} chars", srt_content.len(), cleaned_content.len());
+
+    let prompt = format!(
+        "Based on the following transcript from a video, please provide a concise summary in a few lines. IMPORTANT: Write the summary in the same language as the transcript.\n\n{}",
+        cleaned_content
+    );
+
+    info!("Preparing DeepSeek request (cleaned content length: {} chars, prompt length: {} chars)", cleaned_content.len(), prompt.len());
+
+    let request_body = DeepSeekRequest {
+        model: "deepseek-chat".to_string(),
+        messages: vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: "You are a helpful assistant that creates concise summaries from subtitle files. Always write the summary in the same language as the input text.".to_string(),
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: prompt,
+            },
+        ],
+        max_tokens: 500,
+        temperature: 0.7,
+    };
+
+    info!("Calling DeepSeek API to generate summary");
+    
+    let deepseek_api_key = std::env::var("DEEPSEEK_API_KEY")
+    .context("DEEPSEEK_API_KEY environment variable not set")?;
+
+    let response = match client
+        .post("https://api.deepseek.com/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", deepseek_api_key))
+        .header("Content-Type", "application/json")
+        .json(&request_body)
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            error!("Failed to send request to DeepSeek API: {:?}", e);
+            return Err(anyhow::anyhow!("Failed to send request to DeepSeek API: {}", e));
+        }
+    };
+
+    let status = response.status();
+    info!("DeepSeek API response status: {}", status);
+
+    if !status.is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        error!("DeepSeek API error response: {}", error_text);
+        return Err(anyhow::anyhow!(
+            "DeepSeek API request failed with status {}: {}",
+            status,
+            error_text
+        ));
+    }
+
+    let response_text = match response.text().await {
+        Ok(text) => {
+            info!("Received response from DeepSeek (length: {} chars)", text.len());
+            text
+        },
+        Err(e) => {
+            error!("Failed to read response body: {:?}", e);
+            return Err(anyhow::anyhow!("Failed to read response body: {}", e));
+        }
+    };
+
+    let deepseek_response: DeepSeekResponse = match serde_json::from_str(&response_text) {
+        Ok(resp) => resp,
+        Err(e) => {
+            error!("Failed to parse DeepSeek response: {:?}", e);
+            error!("Response was: {}", response_text);
+            return Err(anyhow::anyhow!("Failed to parse DeepSeek response: {}", e));
+        }
+    };
+
+    let summary = deepseek_response
+        .choices
+        .first()
+        .context("No response from DeepSeek")?
+        .message
+        .content
+        .clone();
+
+    info!("Successfully generated summary (length: {} chars)", summary.len());
+    Ok(summary)
+}
+
 async fn process_resume_video(
     payload: &ResumeVideoPayload, 
     _task_id: &uuid::Uuid,
@@ -316,12 +435,13 @@ async fn process_resume_video_inner(
     
     info!("Read SRT file (length: {} chars)", srt_content.len());
     
-    let openai_api_key = std::env::var("OPENAI_API_KEY")
-        .context("OPENAI_API_KEY environment variable not set")?;
-    
-    let summary = generate_summary_with_chatgpt(&srt_content, &openai_api_key)
+    let summary = generate_summary_with_chatgpt(&srt_content)
         .await
         .context("Failed to generate summary with ChatGPT")?;
+
+    // let summary = generate_summary_with_deepseek(&srt_content)
+    //     .await
+    //     .context("Failed to generate summary with DeepSeek")?;
     
     if let Err(e) = tokio::fs::remove_file(&srt_file_path).await {
         error!("Failed to remove temporary SRT file: {}", e);
